@@ -9,55 +9,85 @@ class Instance {
     /**
      * @param {string} options.user
      * @param {number} options.percentage - percentage to add/sub from market value
-     * @param {number} options.buyQuantity
+     * @param {object} options.strategy
+     * * Ex:
+     * * {
+     * *    "`ADABTC": {
+     * *        "quantity": 20
+     * *    },
+     * *    "ETHBTC": {
+     * *        "quantity": 0.01
+     * *    }
+     * * }
      */
     constructor(options) {
+        this.websockets = {};
         this.client = Binance({
-            apiKey: process.env[`API_KEY_${options.user}`],
-            apiSecret: process.env[`API_SECRET_${options.user}`],
+            apiKey: options.apiKey,
+            apiSecret: options.apiSecret,
             getTime: Date.now,
         });
 
+        this.user = options.user;
         this.percentage = options.percentage;
-        this.buyQuantity = options.buyQuantity;
+        this.strategy = options.strategy;
+
+        this.filledSellOrders = [];
 
         this.logger = require("./lib/myWinston")(`instance_${options.user}`);
+
+        // this.percentage = 1.003;
     }
 
     async init() {
-        this.client.ws.user((eventData) => {
-            if (eventData.side === "BUY" && eventData.orderStatus === "FILLED") {
-                this.logger.info(`Market buy order filled ${eventData.priceLastTrade}`);
+        try {
+            await this.writeExchangeInfoToFile();
+            this.logger.info("exchangeInfo.json up to date.");
+
+            let handleFilledMarketBuy = (eventData) => {
+                //? spacing to line up with sell's in console
+                this.logger.info(`Filled  ${eventData.symbol} "BUY" P:${eventData.priceLastTrade} | Q: ${eventData.quantity}`);
                 this.placeLimitSellOrder(eventData);
+            };
+
+            let handleFilledLimitBuy = (eventData) => {
+                try {
+                    if (this.filledSellOrders.length <= this.strategy.orderLimit) {
+                        this.placeLimitSellOrder(eventData);
+                    } else {
+                        this.completeSession();
+                    }
+                } catch (e) {
+                    this.logger.error(`handleFilledLimitBuy: ${e.message}`);
+                }
             }
-            if (eventData.side === "SELL" && eventData.orderStatus === "FILLED") {
-                this.client.order({
-                    symbol: eventData.symbol,
-                    quantity: this.buyQuantity,
-                    type: "MARKET",
-                    side: "BUY",
-                });
-            }
-        });
 
-        // console.log(await this.client.accountInfo())
+            let handleFilledLimitSell = (eventData) => {
+                try {
+                    this.filledSellOrders.push(eventData);
+                    this.placeLimitBuyOrder(eventData);
+                } catch (e) {
+                    this.logger.error(`handleFilledLimitSell: ${e.message}`);
+                }
+            };
 
-        // let book = await this.client.book({ symbol: "ADABTC" });
-        // let bestBid = book.bids[0].price;
-        // let bestBid3 = calc.roundToTickSize(calc.decreaseByPercentage(bestBid, 1.003), exchangeInfo["ADABTC"].tickSize);
-        // let bestBid6 = calc.roundToTickSize(calc.decreaseByPercentage(bestBid, 1.006), exchangeInfo["ADABTC"].tickSize);
-        // let bestBid9 = calc.roundToTickSize(calc.decreaseByPercentage(bestBid, 1.009), exchangeInfo["ADABTC"].tickSize);
-        // let bestBid12 = calc.roundToTickSize(calc.decreaseByPercentage(bestBid, 1.012), exchangeInfo["ADABTC"].tickSize);
+            this.websockets.user = this.client.ws.user((eventData) => {
+                if (eventData.orderStatus === "FILLED") {
+                    if (!this.strategy[eventData.symbol]) {
+                        throw new Error(`Referenced strategy does not include the pair ${eventData.symbol}`);
+                    }
+                    if (eventData.side === "BUY") handleFilledLimitBuy(eventData);
+                    if (eventData.side === "SELL") handleFilledLimitSell(eventData);
+                }
+            });
 
-        // this.logger.info(`Placing initial orders for: ${bestBid}, ${bestBid3}, ${bestBid6}, ${bestBid9}, ${bestBid12}`);
+            this.logger.info(`Instance initiated`);
+        } catch (e) {
+            this.logger.error(`init: ${e.message}`);
+        }
 
-        // this.client.order({ symbol: "ADABTC", quantity: 20, type: "LIMIT", side: "BUY", price: bestBid });
-        // this.client.order({ symbol: "ADABTC", quantity: 20, type: "LIMIT", side: "BUY", price: bestBid3 });
-        // this.client.order({ symbol: "ADABTC", quantity: 20, type: "LIMIT", side: "BUY", price: bestBid6 });
-        // this.client.order({ symbol: "ADABTC", quantity: 20, type: "LIMIT", side: "BUY", price: bestBid9 });
-        // this.client.order({ symbol: "ADABTC", quantity: 20, type: "LIMIT", side: "BUY", price: bestBid12 });
-
-        // this.logger.info(`Instance initialized`);
+        //* Single execution at start of session
+        this.carpetBomb({ symbol: "ADABTC", numOrders: 1, ticksApart: 5 });
     }
 
     async getExchangeInfo() {
@@ -101,6 +131,7 @@ class Instance {
         try {
             options.price = calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
             options.quantity = calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
+            this.logger.info(`Placing ${options.symbol} "${options.side}" P:${options.price} | Q: ${options.quantity} | T: ${calc.mul(options.price, options.quantity)}`);
             let order = await this.client.order(options);
             return order;
         } catch (e) {
@@ -108,23 +139,114 @@ class Instance {
         }
     }
 
-    async placeLimitBuyOrder(eventData) {}
-    async placeLimitSellOrder(eventData) {
+    async placeLimitBuyOrder(eventData) {
         try {
-            let calcPrice = calc.increaseByPercentage(eventData.priceLastTrade, this.percentage);
-            this.logger.info(`Placing sell order. P:${calcPrice} | Q: ${eventData.quantity}`);
-            let order = await this.placeOrder({
+            let startingBTC = this.strategy[eventData.symbol].startingBTC;
+            let marketValue = await this.getBestBidPrice(eventData.symbol);
+            let buyQuantity = calc.divBy(startingBTC, marketValue);
+
+            this.placeOrder({
                 symbol: eventData.symbol,
-                quantity: eventData.quantity,
+                price: marketValue,
+                quantity: buyQuantity,
                 type: "LIMIT",
-                side: "SELL",
-                price: calcPrice,
+                side: "BUY"
             });
-            return order;
         } catch (e) {
-            this.logger.error(`placeLimitOrder: ${e.message}`);
+            this.logger.error(`placeLimitBuyOrder: ${e.message}`);
         }
     }
+
+    async placeLimitSellOrder(eventData) {
+        try {
+            let targetBTC = this.strategy[eventData.symbol].targetBTC;
+            let sellPrice = calc.divBy(targetBTC, eventData.quantity);
+
+            this.placeOrder({
+                symbol: eventData.symbol,
+                price: sellPrice,
+                quantity: eventData.quantity,
+                type: "LIMIT",
+                side: "SELL"
+            });
+        } catch (e) {
+            this.logger.error(`placeLimitSellOrder: ${e.message}`);
+        }
+    }
+
+    async getBestBidPrice(symbol) {
+            const orderBook = await this.client.book({ symbol: symbol });
+            return orderBook.bids[0];
+    }
+
+    async carpetBomb(options) {
+        try {
+            const orderBook = await this.client.book({ symbol: options.symbol });
+            const bestBid = orderBook.bids[0].price;
+            const tickSize = exchangeInfo[options.symbol].tickSize;
+            const distance = tickSize * options.ticksApart;
+
+            for (let i = 0; i < options.numOrders; i++) {
+                let price = calc.add(bestBid, distance * i);
+                console.log(`price: ${price}`);
+                let order = await this.client.order({
+                    symbol: options.symbol,
+                    quantity: this.strategy[options.symbol].quantity,
+                    type: "LIMIT",
+                    side: "BUY",
+                    price: price,
+                });
+                this.logger.info(`Placed ${options.symbol} buy order for ${price}`);
+            }
+        } catch (e) {
+            this.logger.error(`carpetBomb: ${e.message}`);
+        }
+    }
+
+    completeSession() { 
+        //* Close websocket
+        this.websockets.user();
+        await this.cancelAllOpenBuyOrders();
+        fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
+    }
+    
+    async cancelAllOpenBuyOrders() {
+        let orders = await this.client.openOrders();
+        orders
+            .filter((v) => v.side === "BUY")
+            .forEach((v) => {
+                this.client.cancelOrder({
+                    symbol: v.symbol,
+                    orderId: v.orderId,
+                });
+            });
+    }
+
+    // async recordProfitAndFee(eventData) {
+    //     try {
+    //                             let boughtForPrice =
+    //                                 eventData.price -
+    //                                 calc.roundToTickSize(
+    //                                     calc.divBy(eventData.price, this.percentage),
+    //                                     exchangeInfo[eventData.symbol].tickSize
+    //                                 );
+    //                             let boughtForTotal = calc.mul(boughtForPrice, quantity);
+    //                             let soldForTotal = calc.mul(eventData.price, quantity);
+    //                             let totalProfit = soldForTotal - boughtForTotal;
+    //                             this.profit.BTC = calc.add(this.profit.BTC, totalProfit);
+
+    //                             if (!this.fees[eventData.commissionAsset]) this.fees[eventData.commissionAsset] = 0;
+    //                             this.fees[eventData.commissionAsset] = calc.add(
+    //                                 this.fees[eventData.commissionAsset],
+    //                                 eventData.commission
+    //                             );
+
+    //                             this.logger.info(`profit: ${this.profit.BTC} || fees: ${this.fees[eventData.commissionAsset]}`);
+
+    //     } catch (e) {
+    //         this.logger.error(`recordProfitAndFee: ${e.message}`)
+    //     }
+    // }
 }
 
 module.exports = (options) => new Instance(options);
