@@ -1,12 +1,35 @@
 require("dotenv").config();
-const instance = require('./instance');
+const Instance = require('./instance');
+const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
-const clientTom = instance({
+const instanceTom = new Instance({
     apiKey: process.env.API_KEY_TOM,
     apiSecret: process.env.API_SECRET_TOM,
     strategy: require('./strategies/tomStrategy.json')
 });
-clientTom.init();
+// instanceTom.init();
+
+const sma7 = new SimpleMovingAverageTracker("DOGEUSD", "1m", 5, instanceTom.client);
+(async () => { 
+    await sma7.init();
+    setInterval(() => {
+        console.log(sma7.sma);
+    }, 1000);
+})()
+
+// setInterval(() => {
+//     console.log(sma7.sma);
+// }, 1000);
+
+// const Ticker = require('./ticker');
+// const t = new Ticker(clientTom);
+// (async () => {
+//     await t.setWebsocket(["DOGEUSD"]);
+//     setInterval(() => {
+//         console.log(t.data);
+//     }, 5000);
+// })()
+
 
 // const clientPhil = instance({
 //     apiKey: process.env.API_KEY_PHIL,

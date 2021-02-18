@@ -4,7 +4,6 @@ const Binance = require("us-binance-api-node").default;
 const fs = require("fs");
 const calc = require("./lib/calc");
 const exchangeInfo = require("./exchangeInfo.json");
-
 class Instance {
     /**
      * @param {string} options.user
@@ -27,7 +26,6 @@ class Instance {
             apiSecret: options.apiSecret,
             getTime: Date.now,
         });
-
         this.user = options.user;
         this.percentage = options.percentage;
         this.strategy = options.strategy;
@@ -203,7 +201,7 @@ class Instance {
         }
     }
 
-    completeSession() { 
+    async completeSession() { 
         //* Close websocket
         this.websockets.user();
         await this.cancelAllOpenBuyOrders();
@@ -249,4 +247,4 @@ class Instance {
     // }
 }
 
-module.exports = (options) => new Instance(options);
+module.exports = Instance;
