@@ -5,36 +5,31 @@ const fs = require("fs");
 const calc = require("./lib/calc");
 const exchangeInfo = require("./exchangeInfo.json");
 class Instance {
+    
     /**
-     * @param {string} options.user
-     * @param {number} options.percentage - percentage to add/sub from market value
-     * @param {object} options.strategy
-     * * Ex:
-     * * {
-     * *    "`ADABTC": {
-     * *        "quantity": 20
-     * *    },
-     * *    "ETHBTC": {
-     * *        "quantity": 0.01
-     * *    }
-     * * }
+     * 
+     * @param {string} apiKey 
+     * @param {string} apiSecret
+     * todo change user to use constant
+     * @param {string} user 
+     * @param {number} increasePercentage 
+     * @param {object} strategy 
      */
-    constructor(options) {
+    constructor(apiKey, apiSecret, user, increasePercentage, strategy) {
         this.websockets = {};
         this.client = Binance({
-            apiKey: options.apiKey,
-            apiSecret: options.apiSecret,
+            apiKey: apiKey,
+            apiSecret: apiSecret,
             getTime: Date.now,
         });
-        this.user = options.user;
-        this.percentage = options.percentage;
-        this.strategy = options.strategy;
+        this.user = user;
+        this.increasePercentage = increasePercentage;
+        this.strategy = strategy;
 
+        //todo does this data need to live somewhere else?
         this.filledSellOrders = [];
 
-        this.logger = require("./lib/myWinston")(`instance_${options.user}`);
-
-        // this.percentage = 1.003;
+        this.logger = require("./lib/myWinston")(`instance_${user}`);
     }
 
     async init() {
@@ -205,46 +200,22 @@ class Instance {
         //* Close websocket
         this.websockets.user();
         await this.cancelAllOpenBuyOrders();
+        //todo replace with db
         fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
     }
     
     async cancelAllOpenBuyOrders() {
         let orders = await this.client.openOrders();
         orders
-            .filter((v) => v.side === "BUY")
-            .forEach((v) => {
+            .filter((order) => order.side === "BUY")
+            .forEach((order) => {
                 this.client.cancelOrder({
-                    symbol: v.symbol,
-                    orderId: v.orderId,
+                    symbol: order.symbol,
+                    orderId: order.orderId,
                 });
             });
     }
 
-    // async recordProfitAndFee(eventData) {
-    //     try {
-    //                             let boughtForPrice =
-    //                                 eventData.price -
-    //                                 calc.roundToTickSize(
-    //                                     calc.divBy(eventData.price, this.percentage),
-    //                                     exchangeInfo[eventData.symbol].tickSize
-    //                                 );
-    //                             let boughtForTotal = calc.mul(boughtForPrice, quantity);
-    //                             let soldForTotal = calc.mul(eventData.price, quantity);
-    //                             let totalProfit = soldForTotal - boughtForTotal;
-    //                             this.profit.BTC = calc.add(this.profit.BTC, totalProfit);
-
-    //                             if (!this.fees[eventData.commissionAsset]) this.fees[eventData.commissionAsset] = 0;
-    //                             this.fees[eventData.commissionAsset] = calc.add(
-    //                                 this.fees[eventData.commissionAsset],
-    //                                 eventData.commission
-    //                             );
-
-    //                             this.logger.info(`profit: ${this.profit.BTC} || fees: ${this.fees[eventData.commissionAsset]}`);
-
-    //     } catch (e) {
-    //         this.logger.error(`recordProfitAndFee: ${e.message}`)
-    //     }
-    // }
 }
 
 module.exports = Instance;
