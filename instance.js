@@ -35,56 +35,61 @@ export class Instance {
 
     async init() {
         try {
-            await this.writeExchangeInfoToFile();
-            this.logger.info("exchangeInfo.json up to date.");
-
-            let handleFilledMarketBuy = (eventData) => {
-                //? spacing to line up with sell's in console
-                this.logger.info(`Filled  ${eventData.symbol} "BUY" P:${eventData.priceLastTrade} | Q: ${eventData.quantity}`);
-                this.placeLimitSellOrder(eventData);
-            };
-
-            let handleFilledLimitBuy = (eventData) => {
-                try {
-                    if (this.filledSellOrders.length <= this.strategy.orderLimit) {
-                        this.placeLimitSellOrder(eventData);
-                    } else {
-                        this.completeSession();
-                    }
-                } catch (e) {
-                    this.logger.error(`handleFilledLimitBuy: ${e.message}`);
-                }
-            };
-
-            let handleFilledLimitSell = (eventData) => {
-                try {
-                    this.filledSellOrders.push(eventData);
-                    this.orderDataHandler.insert(eventData);
-
-                    //* Using market buy here instead to avoid things stalling out and never filling a buy order
-                    this.placeMarketBuyOrder(eventData);
-                } catch (e) {
-                    this.logger.error(`handleFilledLimitSell: ${e.message}`);
-                }
-            };
-
-            this.websockets.user = this.client.ws.user((eventData) => {
-                if (eventData.orderStatus === "FILLED") {
-                    if (!this.strategy[eventData.symbol]) {
-                        throw new Error(`Referenced strategy does not include the pair ${eventData.symbol}`);
-                    }
-                    if (eventData.side === "BUY") handleFilledLimitBuy(eventData);
-                    if (eventData.side === "SELL") handleFilledLimitSell(eventData);
-                }
-            });
-
+            await updateExchangeInfo();
+            this.websockets.user = this.client.ws.user(this.handleUserEvent);
             this.logger.info(`Instance initiated`);
+            this.startupActions();
         } catch (e) {
             this.logger.error(`init: ${e.message}`);
         }
+    }
 
-        //* Single execution at start of session
-        // this.placeLimitBuyOrder({symbol: "ADABTC"});
+    /**
+     * @description actions to execute a single time after instance has been initialized
+     */
+    startupActions() {}
+
+    //todo have this write to database
+    async updateExchangeInfo() {
+        try {
+            await this.writeExchangeInfoToFile();
+            this.logger.info("exchangeInfo.json up to date.");
+        } catch (e) {
+            this.logger.error(`updateExchangeInfo: ${e.message}`);
+        }
+    }
+
+    handleUserEvent(eventData) {
+        if (eventData.orderStatus === "FILLED") this.handleOrderEvent(eventData);
+    }
+
+    handleOrderEvent(eventData) {
+        if (eventData.side === "BUY") this.handleFilledBuy(eventData);
+        if (eventData.side === "SELL") this.handleFilledSell(eventData);
+    }
+
+    handleFilledBuy(eventData) {
+        try {
+            if (this.filledSellOrders.length <= this.strategy.orderLimit) {
+                this.placeLimitSellOrder(eventData);
+            } else {
+                this.completeSession();
+            }
+        } catch (e) {
+            this.logger.error(`handleFilledBuy: ${e.message}`);
+        }
+    }
+
+    handleFilledSell(eventData) {
+        try {
+            this.filledSellOrders.push(eventData);
+            this.orderDataHandler.insert(eventData);
+
+            //* Using market buy here instead to avoid things stalling out and never filling a buy order
+            this.placeMarketBuyOrder(eventData);
+        } catch (e) {
+            this.logger.error(`handleFilledSell: ${e.message}`);
+        }
     }
 
     async getExchangeInfo() {
@@ -158,18 +163,19 @@ export class Instance {
                 side: "BUY",
             });
         } catch (e) {
-            this.logger.error(`placeMarketBuyOrder: ${e.message}. Tried to place an ${eventData.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`);
+            this.logger.error(
+                `placeMarketBuyOrder: ${e.message}. Tried to place an ${eventData.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
+            );
         }
     }
 
     /**
      * @description used in response to a filled buy order. adds a number of ticks specified by the strategy
      * and relists the same quantity in the buy order with the new increased price
-     * @param {*} eventData 
+     * @param {*} eventData
      */
     async placeLimitSellOrder(eventData) {
         try {
-
             let tickSize = exchangeInfo[eventData.symbol];
             let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
             let sellPrice = Calc.add(increaseAmount, eventData.price);
