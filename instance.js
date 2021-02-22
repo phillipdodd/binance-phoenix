@@ -12,10 +12,9 @@ export class Instance {
      * @param {string} apiKey
      * @param {string} apiSecret
      * @param {string} user
-     * @param {number} increasePercentage
      * @param {object} strategy
      */
-    constructor(apiKey, apiSecret, user, increasePercentage, strategy) {
+    constructor(apiKey, apiSecret, user, strategy) {
         this.websockets = {};
         this.client = Binance.default({
             apiKey: apiKey,
@@ -23,7 +22,6 @@ export class Instance {
             getTime: Date.now,
         });
         this.user = user;
-        this.increasePercentage = increasePercentage;
         this.strategy = strategy;
 
         this.filledSellOrders = [];
@@ -35,7 +33,14 @@ export class Instance {
     async init() {
         try {
             await this.updateExchangeInfo();
-            this.websockets.user = this.client.ws.user(this.handleUserEvent);
+            this.websockets.user = this.client.ws.user((eventData) => {
+                try {
+                    console.dir(eventData);
+                    if (eventData.orderStatus === "FILLED") this.handleOrderEvent(eventData);
+                } catch (e) {
+                    this.logger.error(`handleUserEvent: ${e.message}`);
+                }
+            });
             this.logger.info(`Instance initiated`);
             this.startupActions();
         } catch (e) {
@@ -48,7 +53,7 @@ export class Instance {
      */
     startupActions() {
         try {
-            this.placeMarketBuyOrder({symbol: "ADABTC"});
+            // this.placeMarketBuyOrder({symbol: "ADABTC"});
         } catch (e) {
             this.logger.error(`startupActions: ${e.message}`);
         }
@@ -64,13 +69,13 @@ export class Instance {
         }
     }
 
-    handleUserEvent(eventData) {
-        if (eventData.orderStatus === "FILLED") this.handleOrderEvent(eventData);
-    }
-
     handleOrderEvent(eventData) {
-        if (eventData.side === "BUY") this.handleFilledBuy(eventData);
-        if (eventData.side === "SELL") this.handleFilledSell(eventData);
+        try {
+            if (eventData.side === "BUY") this.handleFilledBuy(eventData);
+            if (eventData.side === "SELL") this.handleFilledSell(eventData);
+        } catch (e) {
+            this.logger.error(`handleOrderEvent: ${e.message}`);
+        }
     }
 
     handleFilledBuy(eventData) {
@@ -136,7 +141,6 @@ export class Instance {
      */
     async placeOrder(options) {
         try {
-            this.logger.debug(JSON.stringify(options));
             options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
 
             //* Market orders will not be including a 'price' property
@@ -145,9 +149,8 @@ export class Instance {
             }
 
             let order = await this.client.order(options);
-
             this.logger.info(
-                `Placing ${order.symbol} "${order.side}" P:${order.price} | Q: ${order.origQty} | T: ${Calc.mul(
+                `Placing ${order.symbol} "${order.side}" P:${order.fills[0].price} | Q: ${order.origQty} | T: ${Calc.mul(
                     order.price,
                     order.origQty
                 )}`
