@@ -11,7 +11,6 @@ export class Instance {
      *
      * @param {string} apiKey
      * @param {string} apiSecret
-     * todo change user to use constant
      * @param {string} user
      * @param {number} increasePercentage
      * @param {object} strategy
@@ -35,7 +34,7 @@ export class Instance {
 
     async init() {
         try {
-            await updateExchangeInfo();
+            await this.updateExchangeInfo();
             this.websockets.user = this.client.ws.user(this.handleUserEvent);
             this.logger.info(`Instance initiated`);
             this.startupActions();
@@ -47,7 +46,13 @@ export class Instance {
     /**
      * @description actions to execute a single time after instance has been initialized
      */
-    startupActions() {}
+    startupActions() {
+        try {
+            this.placeMarketBuyOrder({symbol: "ADABTC"});
+        } catch (e) {
+            this.logger.error(`startupActions: ${e.message}`);
+        }
+    }
 
     //todo have this write to database
     async updateExchangeInfo() {
@@ -131,17 +136,24 @@ export class Instance {
      */
     async placeOrder(options) {
         try {
+            this.logger.debug(JSON.stringify(options));
+            options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
+
+            //* Market orders will not be including a 'price' property
             if (options.hasOwnProperty("price")) {
                 options.price = Calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
             }
-            options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
+
+            let order = await this.client.order(options);
+
             this.logger.info(
-                `Placing ${options.symbol} "${options.side}" P:${options.price} | Q: ${options.quantity} | T: ${Calc.mul(
-                    options.price,
-                    options.quantity
+                `Placing ${order.symbol} "${order.side}" P:${order.price} | Q: ${order.origQty} | T: ${Calc.mul(
+                    order.price,
+                    order.origQty
                 )}`
             );
-            let order = await this.client.order(options);
+
+            this.orderDataHandler.insert(order);
             return order;
         } catch (e) {
             this.logger.error(`placeOrder: ${e.message}`);
@@ -155,7 +167,6 @@ export class Instance {
 
             let bestBidPrice = await this.getBestBidPrice(eventData.symbol);
             let buyQuantity = Calc.divBy(startingValue, bestBidPrice);
-
             this.placeOrder({
                 symbol: eventData.symbol,
                 quantity: buyQuantity,
