@@ -30,9 +30,6 @@ export class Instance {
         this.filledSellOrders = [];
 
         this.logger = new BaseLogger(`instance_${user}`).init();
-
-        this.startingBTC = 0.0025;
-        this.targetBTC = 0.00255;
     }
 
     async init() {
@@ -63,8 +60,7 @@ export class Instance {
                     this.filledSellOrders.push(eventData);
 
                     //* Using market buy here instead to avoid things stalling out and never filling a buy order
-                    this.placeLimitBuyOrder(eventData);
-                    // this.placeMarketBuyOrder(eventData);
+                    this.placeMarketBuyOrder(eventData);
                 } catch (e) {
                     this.logger.error(`handleFilledLimitSell: ${e.message}`);
                 }
@@ -145,31 +141,13 @@ export class Instance {
         }
     }
 
-    async placeLimitBuyOrder(eventData) {
-        try {
-            //* temporarily using a class variable for startingBTC
-            // let startingBTC = this.strategy[eventData.symbol].startingBTC;
-            let marketValue = await this.getBestBidPrice(eventData.symbol);
-            let buyQuantity = Calc.divBy(this.startingBTC, marketValue);
-
-            this.placeOrder({
-                symbol: eventData.symbol,
-                price: marketValue,
-                quantity: buyQuantity,
-                type: "LIMIT",
-                side: "BUY",
-            });
-        } catch (e) {
-            this.logger.error(`placeLimitBuyOrder: ${e.message}`);
-        }
-    }
-
     async placeMarketBuyOrder(eventData) {
         try {
-            //* temporarily using a class variable for startingBTC
-            // let startingBTC = this.strategy[eventData.symbol].startingBTC;
-            let marketValue = await this.getBestBidPrice(eventData.symbol);
-            let buyQuantity = Calc.divBy(this.startingBTC, marketValue);
+            let pairType = this.getPairType(eventData.symbol);
+            let startingValue = this.strategy[`starting${pairType}`];
+
+            let bestBidPrice = await this.getBestBidPrice(eventData.symbol);
+            let buyQuantity = Calc.divBy(startingValue, bestBidPrice);
 
             this.placeOrder({
                 symbol: eventData.symbol,
@@ -178,15 +156,21 @@ export class Instance {
                 side: "BUY",
             });
         } catch (e) {
-            this.logger.error(`placeMarketBuyOrder: ${e.message}`);
+            this.logger.error(`placeMarketBuyOrder: ${e.message}. Tried to place an ${eventData.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`);
         }
     }
 
+    /**
+     * @description used in response to a filled buy order. adds a number of ticks specified by the strategy
+     * and relists the same quantity in the buy order with the new increased price
+     * @param {*} eventData 
+     */
     async placeLimitSellOrder(eventData) {
         try {
-            //* temporarily using a class variable for targetBTC
-            // let targetBTC = this.strategy[eventData.symbol].targetBTC;
-            let sellPrice = Calc.divBy(this.targetBTC, eventData.quantity);
+
+            let tickSize = exchangeInfo[eventData.symbol];
+            let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
+            let sellPrice = Calc.add(increaseAmount, eventData.price);
 
             this.placeOrder({
                 symbol: eventData.symbol,
@@ -196,7 +180,9 @@ export class Instance {
                 side: "SELL",
             });
         } catch (e) {
-            this.logger.error(`placeLimitSellOrder: ${e.message}`);
+            this.logger.error(
+                `placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order. increaseAmount: ${increaseAmount} | sellPrice: ${sellPrice}`
+            );
         }
     }
 
@@ -246,5 +232,11 @@ export class Instance {
                     orderId: order.orderId,
                 });
             });
+    }
+
+    getPairType(symbol) {
+        let isFiat = symbol.slice(symbol.length - 4, symbol.length - 1) === "USD";
+        let sliceLength = isFiat ? 4 : 3;
+        return symbol.slice(symbol.length - sliceLength, symbol.length);
     }
 }
