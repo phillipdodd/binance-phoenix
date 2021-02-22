@@ -3,6 +3,7 @@ import Binance from "us-binance-api-node";
 import fs from "fs";
 import { Calc } from "./lib/Calc.js";
 import { BaseLogger } from "./lib/BaseLogger.js";
+import { DataHandler } from "./lib/DataHandler.js";
 
 const exchangeInfo = JSON.parse(fs.readFileSync("./exchangeInfo.json"));
 export class Instance {
@@ -26,8 +27,8 @@ export class Instance {
         this.increasePercentage = increasePercentage;
         this.strategy = strategy;
 
-        //todo does this data need to live somewhere else?
         this.filledSellOrders = [];
+        this.orderDataHandler = new DataHandler(user);
 
         this.logger = new BaseLogger(`instance_${user}`).init();
     }
@@ -58,6 +59,7 @@ export class Instance {
             let handleFilledLimitSell = (eventData) => {
                 try {
                     this.filledSellOrders.push(eventData);
+                    this.orderDataHandler.insert(eventData);
 
                     //* Using market buy here instead to avoid things stalling out and never filling a buy order
                     this.placeMarketBuyOrder(eventData);
