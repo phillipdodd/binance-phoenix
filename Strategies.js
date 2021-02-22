@@ -1,7 +1,10 @@
 export const tomStrategy = {
     orderLimit: 10,
+    //* The amount to estimate the quantity of currency to place a buy order for
     startingBTC: 0.0025,
     startingUSD: 20,
+    //* The number of ticks to add to the price paid before re-listing as sell order
+    numTickIncrease: 3,
     ADABTC: {
         quantity: 20,
     },
