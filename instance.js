@@ -35,14 +35,15 @@ export class Instance {
             await this.updateExchangeInfo();
             this.websockets.user = this.client.ws.user((eventData) => {
                 try {
-                    console.dir(eventData);
                     if (eventData.orderStatus === "FILLED") this.handleOrderEvent(eventData);
                 } catch (e) {
                     this.logger.error(`handleUserEvent: ${e.message}`);
                 }
             });
-            this.logger.info(`Instance initiated`);
-            this.startupActions();
+            this.logger.info(`Instance initialized`);
+            setTimeout(() => {
+                this.startupActions();
+            }, 10000);
         } catch (e) {
             this.logger.error(`init: ${e.message}`);
         }
@@ -53,7 +54,7 @@ export class Instance {
      */
     startupActions() {
         try {
-            // this.placeMarketBuyOrder({symbol: "ADABTC"});
+            this.placeMarketBuyOrder({symbol: "ADABTC"});
         } catch (e) {
             this.logger.error(`startupActions: ${e.message}`);
         }
@@ -81,6 +82,7 @@ export class Instance {
     handleFilledBuy(eventData) {
         try {
             if (this.filledSellOrders.length <= this.strategy.orderLimit) {
+                this.orderDataHandler.insert(eventData);
                 this.placeLimitSellOrder(eventData);
             } else {
                 this.completeSession();
@@ -147,16 +149,14 @@ export class Instance {
             if (options.hasOwnProperty("price")) {
                 options.price = Calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
             }
-
             let order = await this.client.order(options);
-            this.logger.info(
-                `Placing ${order.symbol} "${order.side}" P:${order.fills[0].price} | Q: ${order.origQty} | T: ${Calc.mul(
-                    order.price,
-                    order.origQty
-                )}`
-            );
 
+            let price = options.price || order.fills[0].price;
+            this.logger.info(
+                `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
+            );
             this.orderDataHandler.insert(order);
+            
             return order;
         } catch (e) {
             this.logger.error(`placeOrder: ${e.message}`);
@@ -190,21 +190,23 @@ export class Instance {
      */
     async placeLimitSellOrder(eventData) {
         try {
-            let tickSize = exchangeInfo[eventData.symbol];
+            let tickSize = exchangeInfo[eventData.symbol].tickSize;
             let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
-            let sellPrice = Calc.add(increaseAmount, eventData.price);
+            this.logger.debug(`increaseAmount: ${increaseAmount}`);
+            let buyPrice = eventData.orderType === "MARKET" ? eventData.priceLastTrade : eventData.price;
+            this.logger.debug(`buyPrice: ${buyPrice}`);
+            let sellPrice = Calc.add(increaseAmount, buyPrice);
 
-            this.placeOrder({
+            let order = this.placeOrder({
                 symbol: eventData.symbol,
                 price: sellPrice,
                 quantity: eventData.quantity,
                 type: "LIMIT",
                 side: "SELL",
             });
+
         } catch (e) {
-            this.logger.error(
-                `placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order. increaseAmount: ${increaseAmount} | sellPrice: ${sellPrice}`
-            );
+            this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order.`);
         }
     }
 
