@@ -5,7 +5,9 @@ import { Calc } from "./lib/Calc.js";
 import { BaseLogger } from "./lib/BaseLogger.js";
 import { DataHandler } from "./lib/DataHandler.js";
 
+//todo have this read from the db
 const exchangeInfo = JSON.parse(fs.readFileSync("./exchangeInfo.json"));
+
 export class Instance {
     /**
      *
@@ -54,22 +56,21 @@ export class Instance {
      */
     startupActions() {
         try {
-            this.placeMarketBuyOrder({symbol: "ADABTC"});
+            this.placeMarketBuyOrder({ symbol: "ADABTC" });
         } catch (e) {
             this.logger.error(`startupActions: ${e.message}`);
         }
     }
 
-    //todo have this write to database
-    async updateExchangeInfo() {
-        try {
-            await this.writeExchangeInfoToFile();
-            this.logger.info("exchangeInfo.json up to date.");
-        } catch (e) {
-            this.logger.error(`updateExchangeInfo: ${e.message}`);
-        }
+    async completeSession() {
+        //* Close websocket
+        this.websockets.user();
+        await this.cancelAllOpenBuyOrders();
+        //todo replace with db
+        fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
     }
 
+    //todo handler manager
     handleOrderEvent(eventData) {
         try {
             if (eventData.side === "BUY") this.handleFilledBuy(eventData);
@@ -79,6 +80,7 @@ export class Instance {
         }
     }
 
+    //todo handler manager
     handleFilledBuy(eventData) {
         try {
             if (this.filledSellOrders.length <= this.strategy.orderLimit) {
@@ -92,6 +94,7 @@ export class Instance {
         }
     }
 
+    //todo handler manager
     handleFilledSell(eventData) {
         try {
             this.filledSellOrders.push(eventData);
@@ -104,6 +107,7 @@ export class Instance {
         }
     }
 
+    //todo exchangeInfo needs to be in a db, not a flat file
     async getExchangeInfo() {
         try {
             let exchangeInfo = await this.client.exchangeInfo();
@@ -132,11 +136,21 @@ export class Instance {
         }
     }
 
+    async updateExchangeInfo() {
+        try {
+            await this.writeExchangeInfoToFile();
+            this.logger.info("exchangeInfo.json up to date.");
+        } catch (e) {
+            this.logger.error(`updateExchangeInfo: ${e.message}`);
+        }
+    }
+
     async writeExchangeInfoToFile() {
         let exchangeInfo = await this.getExchangeInfo();
         fs.writeFileSync(`./exchangeInfo.json`, JSON.stringify(exchangeInfo));
     }
 
+    //todo tick/step rounds need to happen in a more obvious place. this is a misleading function
     /**
      * @description wrapper that ensures price and quantity are rounded to tick/step sizes
      * @param {*} options
@@ -156,7 +170,7 @@ export class Instance {
                 `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
             );
             this.orderDataHandler.insert(order);
-            
+
             return order;
         } catch (e) {
             this.logger.error(`placeOrder: ${e.message}`);
@@ -204,7 +218,6 @@ export class Instance {
                 type: "LIMIT",
                 side: "SELL",
             });
-
         } catch (e) {
             this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order.`);
         }
@@ -238,14 +251,7 @@ export class Instance {
         }
     }
 
-    async completeSession() {
-        //* Close websocket
-        this.websockets.user();
-        await this.cancelAllOpenBuyOrders();
-        //todo replace with db
-        fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
-    }
-
+    //todo utility class?
     async cancelAllOpenBuyOrders() {
         let orders = await this.client.openOrders();
         orders

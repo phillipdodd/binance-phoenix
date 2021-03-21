@@ -5,21 +5,21 @@ import { tomStrategy } from './lib/Strategies.js';
 // const Instance = require('./instance');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
-// const instanceTom = new Instance(
-//     process.env.API_KEY_TOM,
-//     process.env.API_SECRET_TOM,
-//     Users.Tom,
-//     tomStrategy
-// );
-// instanceTom.init();
-
-const instancePhil = new Instance(
-    process.env.API_KEY_PHIL,
-    process.env.API_SECRET_PHIL,
-    Users.Phil,
+const instanceTom = new Instance(
+    process.env.API_KEY_TOM,
+    process.env.API_SECRET_TOM,
+    Users.Tom,
     tomStrategy
 );
-instancePhil.init();
+instanceTom.init();
+
+// const instancePhil = new Instance(
+//     process.env.API_KEY_PHIL,
+//     process.env.API_SECRET_PHIL,
+//     Users.Phil,
+//     tomStrategy
+// );
+// instancePhil.init();
 
 // const sma7 = new SimpleMovingAverageTracker("DOGEUSD", "1m", 5, instanceTom.client);
 // (async () => { 
