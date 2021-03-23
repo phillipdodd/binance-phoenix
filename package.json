@@ -1,10 +1,11 @@
 {
   "name": "phoenix",
   "version": "1.0.0",
+  "type": "module",
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node -r dotenv/config ./index.js"
   },
   "repository": {
     "type": "git",
@@ -19,6 +20,7 @@
   "homepage": "https://github.com/phillipdodd/phoenix#readme",
   "dependencies": {
     "mathjs": "^9.1.0",
+    "nedb-promises": "^4.1.1",
     "tulind": "^0.8.18",
     "us-binance-api-node": "^0.9.10"
   },

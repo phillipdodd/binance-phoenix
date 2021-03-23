@@ -1,93 +1,113 @@
-require("dotenv").config();
+// const Binance = require("us-binance-api-node").default;
+import Binance from "us-binance-api-node";
+import fs from "fs";
+import { Calc } from "./lib/Calc.js";
+import { BaseLogger } from "./lib/BaseLogger.js";
+import { DataHandler } from "./lib/DataHandler.js";
 
-const Binance = require("us-binance-api-node").default;
-const fs = require("fs");
-const calc = require("./lib/calc");
-const exchangeInfo = require("./exchangeInfo.json");
-class Instance {
+//todo have this read from the db
+const exchangeInfo = JSON.parse(fs.readFileSync("./exchangeInfo.json"));
+
+export class Instance {
     /**
-     * @param {string} options.user
-     * @param {number} options.percentage - percentage to add/sub from market value
-     * @param {object} options.strategy
-     * * Ex:
-     * * {
-     * *    "`ADABTC": {
-     * *        "quantity": 20
-     * *    },
-     * *    "ETHBTC": {
-     * *        "quantity": 0.01
-     * *    }
-     * * }
+     *
+     * @param {string} apiKey
+     * @param {string} apiSecret
+     * @param {string} user
+     * @param {object} strategy
      */
-    constructor(options) {
+    constructor(apiKey, apiSecret, user, strategy) {
         this.websockets = {};
-        this.client = Binance({
-            apiKey: options.apiKey,
-            apiSecret: options.apiSecret,
+        this.client = Binance.default({
+            apiKey: apiKey,
+            apiSecret: apiSecret,
             getTime: Date.now,
         });
-        this.user = options.user;
-        this.percentage = options.percentage;
-        this.strategy = options.strategy;
+        this.user = user;
+        this.strategy = strategy;
 
         this.filledSellOrders = [];
+        this.orderDataHandler = new DataHandler(user);
 
-        this.logger = require("./lib/myWinston")(`instance_${options.user}`);
-
-        // this.percentage = 1.003;
+        this.logger = new BaseLogger(`instance_${user}`).init();
     }
 
     async init() {
         try {
-            await this.writeExchangeInfoToFile();
-            this.logger.info("exchangeInfo.json up to date.");
-
-            let handleFilledMarketBuy = (eventData) => {
-                //? spacing to line up with sell's in console
-                this.logger.info(`Filled  ${eventData.symbol} "BUY" P:${eventData.priceLastTrade} | Q: ${eventData.quantity}`);
-                this.placeLimitSellOrder(eventData);
-            };
-
-            let handleFilledLimitBuy = (eventData) => {
-                try {
-                    if (this.filledSellOrders.length <= this.strategy.orderLimit) {
-                        this.placeLimitSellOrder(eventData);
-                    } else {
-                        this.completeSession();
-                    }
-                } catch (e) {
-                    this.logger.error(`handleFilledLimitBuy: ${e.message}`);
-                }
-            }
-
-            let handleFilledLimitSell = (eventData) => {
-                try {
-                    this.filledSellOrders.push(eventData);
-                    this.placeLimitBuyOrder(eventData);
-                } catch (e) {
-                    this.logger.error(`handleFilledLimitSell: ${e.message}`);
-                }
-            };
-
+            await this.updateExchangeInfo();
             this.websockets.user = this.client.ws.user((eventData) => {
-                if (eventData.orderStatus === "FILLED") {
-                    if (!this.strategy[eventData.symbol]) {
-                        throw new Error(`Referenced strategy does not include the pair ${eventData.symbol}`);
-                    }
-                    if (eventData.side === "BUY") handleFilledLimitBuy(eventData);
-                    if (eventData.side === "SELL") handleFilledLimitSell(eventData);
+                try {
+                    if (eventData.orderStatus === "FILLED") this.handleOrderEvent(eventData);
+                } catch (e) {
+                    this.logger.error(`handleUserEvent: ${e.message}`);
                 }
             });
-
-            this.logger.info(`Instance initiated`);
+            this.logger.info(`Instance initialized`);
+            setTimeout(() => {
+                this.startupActions();
+            }, 10000);
         } catch (e) {
             this.logger.error(`init: ${e.message}`);
         }
-
-        //* Single execution at start of session
-        this.carpetBomb({ symbol: "ADABTC", numOrders: 1, ticksApart: 5 });
     }
 
+    /**
+     * @description actions to execute a single time after instance has been initialized
+     */
+    startupActions() {
+        try {
+            this.placeMarketBuyOrder({ symbol: "ADABTC" });
+        } catch (e) {
+            this.logger.error(`startupActions: ${e.message}`);
+        }
+    }
+
+    async completeSession() {
+        //* Close websocket
+        this.websockets.user();
+        await this.cancelAllOpenBuyOrders();
+        //todo replace with db
+        fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
+    }
+
+    //todo handler manager
+    handleOrderEvent(eventData) {
+        try {
+            if (eventData.side === "BUY") this.handleFilledBuy(eventData);
+            if (eventData.side === "SELL") this.handleFilledSell(eventData);
+        } catch (e) {
+            this.logger.error(`handleOrderEvent: ${e.message}`);
+        }
+    }
+
+    //todo handler manager
+    handleFilledBuy(eventData) {
+        try {
+            if (this.filledSellOrders.length <= this.strategy.orderLimit) {
+                this.orderDataHandler.insert(eventData);
+                this.placeLimitSellOrder(eventData);
+            } else {
+                this.completeSession();
+            }
+        } catch (e) {
+            this.logger.error(`handleFilledBuy: ${e.message}`);
+        }
+    }
+
+    //todo handler manager
+    handleFilledSell(eventData) {
+        try {
+            this.filledSellOrders.push(eventData);
+            this.orderDataHandler.insert(eventData);
+
+            //* Using market buy here instead to avoid things stalling out and never filling a buy order
+            this.placeMarketBuyOrder(eventData);
+        } catch (e) {
+            this.logger.error(`handleFilledSell: ${e.message}`);
+        }
+    }
+
+    //todo exchangeInfo needs to be in a db, not a flat file
     async getExchangeInfo() {
         try {
             let exchangeInfo = await this.client.exchangeInfo();
@@ -116,65 +136,96 @@ class Instance {
         }
     }
 
+    async updateExchangeInfo() {
+        try {
+            await this.writeExchangeInfoToFile();
+            this.logger.info("exchangeInfo.json up to date.");
+        } catch (e) {
+            this.logger.error(`updateExchangeInfo: ${e.message}`);
+        }
+    }
+
     async writeExchangeInfoToFile() {
         let exchangeInfo = await this.getExchangeInfo();
         fs.writeFileSync(`./exchangeInfo.json`, JSON.stringify(exchangeInfo));
     }
 
+    //todo tick/step rounds need to happen in a more obvious place. this is a misleading function
     /**
      * @description wrapper that ensures price and quantity are rounded to tick/step sizes
      * @param {*} options
      */
     async placeOrder(options) {
         try {
-            options.price = calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
-            options.quantity = calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
-            this.logger.info(`Placing ${options.symbol} "${options.side}" P:${options.price} | Q: ${options.quantity} | T: ${calc.mul(options.price, options.quantity)}`);
+            options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
+
+            //* Market orders will not be including a 'price' property
+            if (options.hasOwnProperty("price")) {
+                options.price = Calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
+            }
             let order = await this.client.order(options);
+
+            let price = options.price || order.fills[0].price;
+            this.logger.info(
+                `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
+            );
+            this.orderDataHandler.insert(order);
+
             return order;
         } catch (e) {
             this.logger.error(`placeOrder: ${e.message}`);
         }
     }
 
-    async placeLimitBuyOrder(eventData) {
+    async placeMarketBuyOrder(eventData) {
         try {
-            let startingBTC = this.strategy[eventData.symbol].startingBTC;
-            let marketValue = await this.getBestBidPrice(eventData.symbol);
-            let buyQuantity = calc.divBy(startingBTC, marketValue);
+            let pairType = this.getPairType(eventData.symbol);
+            let startingValue = this.strategy[`starting${pairType}`];
 
+            let bestBidPrice = await this.getBestBidPrice(eventData.symbol);
+            let buyQuantity = Calc.divBy(startingValue, bestBidPrice);
             this.placeOrder({
                 symbol: eventData.symbol,
-                price: marketValue,
                 quantity: buyQuantity,
-                type: "LIMIT",
-                side: "BUY"
+                type: "MARKET",
+                side: "BUY",
             });
         } catch (e) {
-            this.logger.error(`placeLimitBuyOrder: ${e.message}`);
+            this.logger.error(
+                `placeMarketBuyOrder: ${e.message}. Tried to place an ${eventData.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
+            );
         }
     }
 
+    /**
+     * @description used in response to a filled buy order. adds a number of ticks specified by the strategy
+     * and relists the same quantity in the buy order with the new increased price
+     * @param {*} eventData
+     */
     async placeLimitSellOrder(eventData) {
         try {
-            let targetBTC = this.strategy[eventData.symbol].targetBTC;
-            let sellPrice = calc.divBy(targetBTC, eventData.quantity);
+            let tickSize = exchangeInfo[eventData.symbol].tickSize;
+            let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
+            this.logger.debug(`increaseAmount: ${increaseAmount}`);
+            let buyPrice = eventData.orderType === "MARKET" ? eventData.priceLastTrade : eventData.price;
+            this.logger.debug(`buyPrice: ${buyPrice}`);
+            let sellPrice = Calc.add(increaseAmount, buyPrice);
 
-            this.placeOrder({
+            let order = this.placeOrder({
                 symbol: eventData.symbol,
                 price: sellPrice,
                 quantity: eventData.quantity,
                 type: "LIMIT",
-                side: "SELL"
+                side: "SELL",
             });
         } catch (e) {
-            this.logger.error(`placeLimitSellOrder: ${e.message}`);
+            this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order.`);
         }
     }
 
     async getBestBidPrice(symbol) {
-            const orderBook = await this.client.book({ symbol: symbol });
-            return orderBook.bids[0];
+        const orderBook = await this.client.book({ symbol: symbol });
+        return orderBook.bids[0].price;
     }
 
     async carpetBomb(options) {
@@ -185,8 +236,7 @@ class Instance {
             const distance = tickSize * options.ticksApart;
 
             for (let i = 0; i < options.numOrders; i++) {
-                let price = calc.add(bestBid, distance * i);
-                console.log(`price: ${price}`);
+                let price = Calc.add(bestBid, distance * i);
                 let order = await this.client.order({
                     symbol: options.symbol,
                     quantity: this.strategy[options.symbol].quantity,
@@ -201,50 +251,22 @@ class Instance {
         }
     }
 
-    async completeSession() { 
-        //* Close websocket
-        this.websockets.user();
-        await this.cancelAllOpenBuyOrders();
-        fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
-    }
-    
+    //todo utility class?
     async cancelAllOpenBuyOrders() {
         let orders = await this.client.openOrders();
         orders
-            .filter((v) => v.side === "BUY")
-            .forEach((v) => {
+            .filter((order) => order.side === "BUY")
+            .forEach((order) => {
                 this.client.cancelOrder({
-                    symbol: v.symbol,
-                    orderId: v.orderId,
+                    symbol: order.symbol,
+                    orderId: order.orderId,
                 });
             });
     }
 
-    // async recordProfitAndFee(eventData) {
-    //     try {
-    //                             let boughtForPrice =
-    //                                 eventData.price -
-    //                                 calc.roundToTickSize(
-    //                                     calc.divBy(eventData.price, this.percentage),
-    //                                     exchangeInfo[eventData.symbol].tickSize
-    //                                 );
-    //                             let boughtForTotal = calc.mul(boughtForPrice, quantity);
-    //                             let soldForTotal = calc.mul(eventData.price, quantity);
-    //                             let totalProfit = soldForTotal - boughtForTotal;
-    //                             this.profit.BTC = calc.add(this.profit.BTC, totalProfit);
-
-    //                             if (!this.fees[eventData.commissionAsset]) this.fees[eventData.commissionAsset] = 0;
-    //                             this.fees[eventData.commissionAsset] = calc.add(
-    //                                 this.fees[eventData.commissionAsset],
-    //                                 eventData.commission
-    //                             );
-
-    //                             this.logger.info(`profit: ${this.profit.BTC} || fees: ${this.fees[eventData.commissionAsset]}`);
-
-    //     } catch (e) {
-    //         this.logger.error(`recordProfitAndFee: ${e.message}`)
-    //     }
-    // }
+    getPairType(symbol) {
+        let isFiat = symbol.slice(symbol.length - 4, symbol.length - 1) === "USD";
+        let sliceLength = isFiat ? 4 : 3;
+        return symbol.slice(symbol.length - sliceLength, symbol.length);
+    }
 }
-
-module.exports = Instance;
