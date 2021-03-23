@@ -1,9 +1,10 @@
 // const Binance = require("us-binance-api-node").default;
 import Binance from "us-binance-api-node";
-import fs from "fs";
+
 import { Calc } from "./lib/Calc.js";
 import { BaseLogger } from "./lib/BaseLogger.js";
-import { DataHandler } from "./lib/DataHandler.js";
+
+import { InstanceUtility } from "./lib/InstanceUtility.js";
 
 //todo have this read from the db
 const exchangeInfo = JSON.parse(fs.readFileSync("./exchangeInfo.json"));
@@ -26,18 +27,23 @@ export class Instance {
         this.user = user;
         this.strategy = strategy;
 
+        
         this.filledSellOrders = [];
         this.orderDataHandler = new DataHandler(user);
-
+        
         this.logger = new BaseLogger(`instance_${user}`).init();
+        
+        this.utility = new InstanceUtility(this);
     }
 
     async init() {
         try {
-            await this.updateExchangeInfo();
+            await this.utility.updateExchangeInfo();
             this.websockets.user = this.client.ws.user((eventData) => {
                 try {
-                    if (eventData.orderStatus === "FILLED") this.handleOrderEvent(eventData);
+                    if (eventData.orderStatus === "FILLED") {
+                        this.handleOrderEvent(eventData);
+                    }
                 } catch (e) {
                     this.logger.error(`handleUserEvent: ${e.message}`);
                 }
@@ -65,7 +71,7 @@ export class Instance {
     async completeSession() {
         //* Close websocket
         this.websockets.user();
-        await this.cancelAllOpenBuyOrders();
+        await this.utility.cancelAllOpenBuyOrders();
         //todo replace with db
         fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
     }
@@ -73,7 +79,7 @@ export class Instance {
     //todo handler manager
     handleOrderEvent(eventData) {
         try {
-            if (eventData.side === "BUY") this.handleFilledBuy(eventData);
+            if (eventData.side === "BUY")  this.handleFilledBuy(eventData);
             if (eventData.side === "SELL") this.handleFilledSell(eventData);
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
@@ -107,49 +113,6 @@ export class Instance {
         }
     }
 
-    //todo exchangeInfo needs to be in a db, not a flat file
-    async getExchangeInfo() {
-        try {
-            let exchangeInfo = await this.client.exchangeInfo();
-            let simplifiedExchangeInfo = {};
-            let getFilterValue = (value, filterName) => {
-                return value.filters.find((filter) => {
-                    return filter.hasOwnProperty(filterName);
-                })[filterName];
-            };
-
-            exchangeInfo.symbols.forEach((v) => {
-                simplifiedExchangeInfo[v.symbol] = {
-                    baseAsset: v.baseAsset,
-                    quoteAsset: v.quoteAsset,
-                    quotePrecision: v.quotePrecision,
-                    status: v.status,
-                    tickSize: getFilterValue(v, "tickSize"),
-                    stepSize: getFilterValue(v, "stepSize"),
-                    minNotional: getFilterValue(v, "minNotional"),
-                };
-            });
-
-            return simplifiedExchangeInfo;
-        } catch (e) {
-            this.logger.error(e.message);
-        }
-    }
-
-    async updateExchangeInfo() {
-        try {
-            await this.writeExchangeInfoToFile();
-            this.logger.info("exchangeInfo.json up to date.");
-        } catch (e) {
-            this.logger.error(`updateExchangeInfo: ${e.message}`);
-        }
-    }
-
-    async writeExchangeInfoToFile() {
-        let exchangeInfo = await this.getExchangeInfo();
-        fs.writeFileSync(`./exchangeInfo.json`, JSON.stringify(exchangeInfo));
-    }
-
     //todo tick/step rounds need to happen in a more obvious place. this is a misleading function
     /**
      * @description wrapper that ensures price and quantity are rounded to tick/step sizes
@@ -157,21 +120,16 @@ export class Instance {
      */
     async placeOrder(options) {
         try {
-            options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
+            let correctedOptions = correctTickAndStep(options);
+            let orderResponse = await this.client.order(correctedOptions);
 
-            //* Market orders will not be including a 'price' property
-            if (options.hasOwnProperty("price")) {
-                options.price = Calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
-            }
-            let order = await this.client.order(options);
-
-            let price = options.price || order.fills[0].price;
+            let price = correctedOptions.price || orderResponse.fills[0].price;
             this.logger.info(
-                `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
+                `Placing ${orderResponse.symbol} "${orderResponse.side}" P:${price} | Q: ${orderResponse.origQty} | T: ${Calc.mul(price, orderResponse.origQty)}`
             );
-            this.orderDataHandler.insert(order);
+            this.orderDataHandler.insert(orderResponse);
 
-            return order;
+            return orderResponse;
         } catch (e) {
             this.logger.error(`placeOrder: ${e.message}`);
         }
@@ -222,51 +180,21 @@ export class Instance {
             this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order.`);
         }
     }
+}
 
-    async getBestBidPrice(symbol) {
-        const orderBook = await this.client.book({ symbol: symbol });
-        return orderBook.bids[0].price;
-    }
-
-    async carpetBomb(options) {
-        try {
-            const orderBook = await this.client.book({ symbol: options.symbol });
-            const bestBid = orderBook.bids[0].price;
-            const tickSize = exchangeInfo[options.symbol].tickSize;
-            const distance = tickSize * options.ticksApart;
-
-            for (let i = 0; i < options.numOrders; i++) {
-                let price = Calc.add(bestBid, distance * i);
-                let order = await this.client.order({
-                    symbol: options.symbol,
-                    quantity: this.strategy[options.symbol].quantity,
-                    type: "LIMIT",
-                    side: "BUY",
-                    price: price,
-                });
-                this.logger.info(`Placed ${options.symbol} buy order for ${price}`);
-            }
-        } catch (e) {
-            this.logger.error(`carpetBomb: ${e.message}`);
+function correctTickAndStep(options) {
+    try {
+        //* Market orders will not be including a 'price' property
+        if (options.hasOwnProperty("price")) {
+            options.price = Calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
         }
-    }
 
-    //todo utility class?
-    async cancelAllOpenBuyOrders() {
-        let orders = await this.client.openOrders();
-        orders
-            .filter((order) => order.side === "BUY")
-            .forEach((order) => {
-                this.client.cancelOrder({
-                    symbol: order.symbol,
-                    orderId: order.orderId,
-                });
-            });
-    }
+        if (options.hasOwnProperty("quantity")) {
+            options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
+        }
 
-    getPairType(symbol) {
-        let isFiat = symbol.slice(symbol.length - 4, symbol.length - 1) === "USD";
-        let sliceLength = isFiat ? 4 : 3;
-        return symbol.slice(symbol.length - sliceLength, symbol.length);
+        return options;
+    } catch (e) {
+        this.logger.error(`correctTickAndStep: ${e.message}`);
     }
 }
