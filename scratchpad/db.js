@@ -1,3 +1,3 @@
-import { DataHandler } from "../lib/DataHandler.js";
+const DataHandler = require('./DataHandler.js');
 let dataHandler = new DataHandler('bob');
 dataHandler.insert({name: "bob"})
