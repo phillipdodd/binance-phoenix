@@ -1,15 +1,10 @@
-// const Binance = require("us-binance-api-node").default;
-import Binance from "us-binance-api-node";
+const Binance = require("us-binance-api-node");
+const Calc = require("./lib/Calc.js");
+const BaseLogger = require('./lib/BaseLogger.js');
+const InstanceUtility = require('./lib/InstanceUtility.js');
+const DataHandler = require('./lib/DataHandler.js');
 
-import { Calc } from "./lib/Calc.js";
-import { BaseLogger } from "./lib/BaseLogger.js";
-
-import { InstanceUtility } from "./lib/InstanceUtility.js";
-
-//todo have this read from the db
-const exchangeInfo = JSON.parse(fs.readFileSync("./exchangeInfo.json"));
-
-export class Instance {
+module.exports = class Instance {
     /**
      *
      * @param {string} apiKey
@@ -49,9 +44,9 @@ export class Instance {
                 }
             });
             this.logger.info(`Instance initialized`);
-            setTimeout(() => {
-                this.startupActions();
-            }, 10000);
+            // setTimeout(() => {
+            //     this.startupActions();
+            // }, 10000);
         } catch (e) {
             this.logger.error(`init: ${e.message}`);
         }

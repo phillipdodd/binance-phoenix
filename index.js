@@ -1,7 +1,6 @@
-import { Instance } from './Instance.js';
-import { Users } from './lib/Constants.js';
-import { tomStrategy } from './lib/Strategies.js';
-
+const Instance = require("./Instance.js");
+const Users = require("./lib/Constants.js");
+const tomStrategy = require('./data/Strategies.js');
 // const Instance = require('./instance');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
