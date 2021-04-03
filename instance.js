@@ -23,7 +23,7 @@ module.exports = class Instance {
         this.strategy = strategy;
 
         
-        this.filledSellOrders = [];
+        this.filledSellOrders = 0;
         this.orderDataHandler = new DataHandler(user);
         
         this.logger = new BaseLogger(`instance_${user}`).init();
@@ -35,18 +35,15 @@ module.exports = class Instance {
         try {
             await this.utility.updateExchangeInfo();
             this.websockets.user = this.client.ws.user((eventData) => {
-                try {
-                    if (eventData.orderStatus === "FILLED") {
-                        this.handleOrderEvent(eventData);
-                    }
-                } catch (e) {
-                    this.logger.error(`handleUserEvent: ${e.message}`);
+                if (eventData.orderStatus === "FILLED") {
+                    this.handleOrderEvent(eventData);
                 }
             });
             this.logger.info(`Instance initialized`);
-            // setTimeout(() => {
-            //     this.startupActions();
-            // }, 10000);
+
+            setTimeout(() => {
+                this.startupActions();
+            }, 10000);
         } catch (e) {
             this.logger.error(`init: ${e.message}`);
         }
@@ -57,7 +54,7 @@ module.exports = class Instance {
      */
     startupActions() {
         try {
-            this.placeMarketBuyOrder({ symbol: "ADABTC" });
+            // this.placeMarketBuyOrder({ symbol: "ADABTC" });
         } catch (e) {
             this.logger.error(`startupActions: ${e.message}`);
         }
@@ -67,57 +64,36 @@ module.exports = class Instance {
         //* Close websocket
         this.websockets.user();
         await this.utility.cancelAllOpenBuyOrders();
-        //todo replace with db
-        fs.writeFileSync(`./filledSellOrders.json`, JSON.stringify(this.filledSellOrders));
     }
 
-    //todo handler manager
     handleOrderEvent(eventData) {
         try {
-            if (eventData.side === "BUY")  this.handleFilledBuy(eventData);
-            if (eventData.side === "SELL") this.handleFilledSell(eventData);
+            if (this.filledSellOrders >= this.strategy.orderLimit) {
+                this.completeSession();
+                return;
+            }
+
+            this.orderDataHandler.insert(eventData);
+
+            if (eventData.side === "BUY") {
+                this.placeLimitSellOrder(eventData);
+            } else if (eventData.side === "SELL") {
+                this.filledSellOrders++;
+                //* Using market buy here instead to avoid things stalling out and never filling a buy order
+                this.placeMarketBuyOrder(eventData);
+            }
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
         }
     }
 
-    //todo handler manager
-    handleFilledBuy(eventData) {
-        try {
-            if (this.filledSellOrders.length <= this.strategy.orderLimit) {
-                this.orderDataHandler.insert(eventData);
-                this.placeLimitSellOrder(eventData);
-            } else {
-                this.completeSession();
-            }
-        } catch (e) {
-            this.logger.error(`handleFilledBuy: ${e.message}`);
-        }
-    }
-
-    //todo handler manager
-    handleFilledSell(eventData) {
-        try {
-            this.filledSellOrders.push(eventData);
-            this.orderDataHandler.insert(eventData);
-
-            //* Using market buy here instead to avoid things stalling out and never filling a buy order
-            this.placeMarketBuyOrder(eventData);
-        } catch (e) {
-            this.logger.error(`handleFilledSell: ${e.message}`);
-        }
-    }
-
-    //todo tick/step rounds need to happen in a more obvious place. this is a misleading function
     /**
      * @description wrapper that ensures price and quantity are rounded to tick/step sizes
      * @param {*} options
      */
     async placeOrder(options) {
         try {
-            let correctedOptions = correctTickAndStep(options);
-            let orderResponse = await this.client.order(correctedOptions);
-
+            let orderResponse = await this.client.order(correctTickAndStep(options));
             let price = correctedOptions.price || orderResponse.fills[0].price;
             this.logger.info(
                 `Placing ${orderResponse.symbol} "${orderResponse.side}" P:${price} | Q: ${orderResponse.origQty} | T: ${Calc.mul(price, orderResponse.origQty)}`
@@ -132,17 +108,14 @@ module.exports = class Instance {
 
     async placeMarketBuyOrder(eventData) {
         try {
-            let pairType = this.getPairType(eventData.symbol);
-            let startingValue = this.strategy[`starting${pairType}`];
-
-            let bestBidPrice = await this.getBestBidPrice(eventData.symbol);
-            let buyQuantity = Calc.divBy(startingValue, bestBidPrice);
-            this.placeOrder({
+            const buyQuantity = getBuyQuantity(eventData);
+            let orderResponse = this.placeOrder({
                 symbol: eventData.symbol,
                 quantity: buyQuantity,
                 type: "MARKET",
                 side: "BUY",
             });
+            return orderResponse;
         } catch (e) {
             this.logger.error(
                 `placeMarketBuyOrder: ${e.message}. Tried to place an ${eventData.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
@@ -157,24 +130,38 @@ module.exports = class Instance {
      */
     async placeLimitSellOrder(eventData) {
         try {
-            let tickSize = exchangeInfo[eventData.symbol].tickSize;
-            let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
-            this.logger.debug(`increaseAmount: ${increaseAmount}`);
-            let buyPrice = eventData.orderType === "MARKET" ? eventData.priceLastTrade : eventData.price;
-            this.logger.debug(`buyPrice: ${buyPrice}`);
-            let sellPrice = Calc.add(increaseAmount, buyPrice);
-
-            let order = this.placeOrder({
+            const sellPrice = getSellPrice(eventData);
+            let orderResponse = this.placeOrder({
                 symbol: eventData.symbol,
                 price: sellPrice,
                 quantity: eventData.quantity,
                 type: "LIMIT",
                 side: "SELL",
             });
+            return orderResponse;
         } catch (e) {
             this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order.`);
         }
     }
+}
+
+function getBuyQuantity(eventData) {
+    const pairType = this.getPairType(eventData.symbol);
+    const startingValue = this.strategy[`starting${pairType}`];
+
+    const bestBidPrice = await this.getBestBidPrice(eventData.symbol);
+    const buyQuantity = Calc.divBy(startingValue, bestBidPrice);
+    return buyQuantity;
+}
+
+function getSellPrice(eventData) {
+    let tickSize = exchangeInfo[eventData.symbol].tickSize;
+    let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
+    this.logger.debug(`increaseAmount: ${increaseAmount}`);
+    let buyPrice = eventData.orderType === "MARKET" ? eventData.priceLastTrade : eventData.price;
+    this.logger.debug(`buyPrice: ${buyPrice}`);
+    let sellPrice = Calc.add(increaseAmount, buyPrice);
+    return sellPrice;
 }
 
 function correctTickAndStep(options) {
