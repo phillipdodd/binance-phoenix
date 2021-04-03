@@ -1,5 +1,5 @@
 const Instance = require("./Instance.js");
-const Users = require("./lib/Constants.js");
+const Users = require("./data/Users.js");
 const tomStrategy = require('./data/Strategies.js');
 // const Instance = require('./instance');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
