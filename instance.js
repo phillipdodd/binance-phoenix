@@ -3,6 +3,7 @@ const Calc = require("./lib/Calc.js");
 const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
+const GeneratorFactory = require('./lib/GeneratorFactory.js');
 
 module.exports = class Instance {
     /**
@@ -64,7 +65,7 @@ module.exports = class Instance {
         await this.utility.cancelAllOpenBuyOrders();
     }
 
-    handleOrderEvent(eventData) {
+    async handleOrderEvent(eventData) {
         try {
             if (this.orderCache.long >= this.strategy.orderLimit) {
                 this.completeSession();
@@ -74,11 +75,26 @@ module.exports = class Instance {
             this.orderDataHandler.insert(eventData);
 
             if (eventData.side === "BUY") {
-                this.placeLimitSellOrder(eventData);
+                
+                //* Create generator if one does not currently exist
+                if (!this.orderCache.hasOwnProperty(eventData.orderId)) {
+                    this.orderCache[marketBuyOrder.orderID] = GeneratorFactory.createIterator(
+                        marketBuyOrder.price,
+                        this.strategy.increasePercentage
+                    );
+                }
+
+                const limitSellOrder = await this.placeLimitSellOrder(eventData);
+                this.orderCache.renameProp(eventData.orderId, limitSellOrder.orderId);
+
             } else if (eventData.side === "SELL") {
-                //* Using market buy here instead to avoid things stalling out and never filling a buy order
-                let marketBuyOrder = this.placeMarketBuyOrder(eventData);
-                this.orderCache[marketBuyOrder.orderID] = 
+
+                const isInPriceRange = GeneratorFactory.run(this.orderCache[eventData.orderId], eventData.price);
+                if (isInPriceRange) {
+                    //* Using market buy here instead to avoid things stalling out and never filling a buy order
+                    this.placeMarketBuyOrder(eventData);
+                }
+                
             }
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
