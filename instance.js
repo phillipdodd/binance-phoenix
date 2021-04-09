@@ -22,12 +22,10 @@ module.exports = class Instance {
         this.user = user;
         this.strategy = strategy;
 
+        this.orderCache = 0;
         
-        this.filledSellOrders = 0;
         this.orderDataHandler = new DataHandler(user);
-        
         this.logger = new BaseLogger(`instance_${user}`).init();
-        
         this.utility = new InstanceUtility(this);
     }
 
@@ -68,7 +66,7 @@ module.exports = class Instance {
 
     handleOrderEvent(eventData) {
         try {
-            if (this.filledSellOrders >= this.strategy.orderLimit) {
+            if (this.orderCache.long >= this.strategy.orderLimit) {
                 this.completeSession();
                 return;
             }
@@ -78,9 +76,9 @@ module.exports = class Instance {
             if (eventData.side === "BUY") {
                 this.placeLimitSellOrder(eventData);
             } else if (eventData.side === "SELL") {
-                this.filledSellOrders++;
                 //* Using market buy here instead to avoid things stalling out and never filling a buy order
-                this.placeMarketBuyOrder(eventData);
+                let marketBuyOrder = this.placeMarketBuyOrder(eventData);
+                this.orderCache[marketBuyOrder.orderID] = 
             }
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
