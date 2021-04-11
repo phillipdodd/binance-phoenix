@@ -8,16 +8,14 @@ const GeneratorFactory = require('./lib/GeneratorFactory.js');
 module.exports = class Instance {
     /**
      *
-     * @param {string} apiKey
-     * @param {string} apiSecret
      * @param {string} user
      * @param {object} strategy
      */
-    constructor(apiKey, apiSecret, user, strategy) {
+    constructor(user, strategy) {
         this.websockets = {};
         this.client = Binance.default({
-            apiKey: apiKey,
-            apiSecret: apiSecret,
+            apiKey: process.env[`API_KEY_${user}`],
+            apiSecret: process.env[`API_SECRET_${user}`],
             getTime: Date.now,
         });
         this.user = user;
