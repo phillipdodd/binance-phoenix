@@ -21,9 +21,9 @@ module.exports = class Instance {
         this.user = user;
         this.strategy = strategy;
 
-        this.orderCache = 0;
+        this.orderCache = {};
         
-        this.orderDataHandler = new DataHandler(user);
+        this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
         this.utility = new InstanceUtility(this);
     }
@@ -70,7 +70,7 @@ module.exports = class Instance {
                 return;
             }
 
-            this.orderDataHandler.insert(eventData);
+            this.dataHandler.insert(eventData);
 
             if (eventData.side === "BUY") {
                 
@@ -110,7 +110,7 @@ module.exports = class Instance {
             this.logger.info(
                 `Placing ${orderResponse.symbol} "${orderResponse.side}" P:${price} | Q: ${orderResponse.origQty} | T: ${Calc.mul(price, orderResponse.origQty)}`
             );
-            this.orderDataHandler.insert(orderResponse);
+            this.dataHandler.insert(orderResponse);
 
             return orderResponse;
         } catch (e) {
