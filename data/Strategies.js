@@ -162,6 +162,9 @@ const Strategies = {
         PAXGUSD: {
             quantity: 0.01,
         },
+    },
+    philStrategy: {
+        
     }
 }
 
