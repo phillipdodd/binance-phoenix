@@ -5,4 +5,7 @@
 
 // const instance = new Instance(User.Tom, tomStrategy);
 
+test.todo('Can initialize successfully');
+test.todo('Can open websocket');
+
 
