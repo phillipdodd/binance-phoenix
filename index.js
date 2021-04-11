@@ -5,8 +5,6 @@ const tomStrategy = require('./data/Strategies.js');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
 const instanceTom = new Instance(
-    process.env.API_KEY_TOM,
-    process.env.API_SECRET_TOM,
     Users.Tom,
     tomStrategy
 );
