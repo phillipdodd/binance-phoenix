@@ -1,11 +1,12 @@
 const Binance = require("us-binance-api-node");
+//todo calc is only used in that one log statement, could likely be ultimately removed
 const Calc = require("./lib/Calc.js");
 const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
 const GeneratorFactory = require('./lib/GeneratorFactory.js');
 
-module.exports = class Instance {
+class Instance {
     /**
      *
      * @param {string} user
@@ -22,7 +23,7 @@ module.exports = class Instance {
         this.strategy = strategy;
 
         this.orderCache = {};
-        
+
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
         this.utility = new InstanceUtility(this);
@@ -63,6 +64,15 @@ module.exports = class Instance {
         await this.utility.cancelAllOpenBuyOrders();
     }
 
+    createGeneratorForOrder(eventData) {
+        if (!this.orderCache.hasOwnProperty(eventData.orderId)) {
+            this.orderCache[eventData.orderID] = GeneratorFactory.createIterator(
+                eventData.price,
+                this.strategy.increasePercentage
+            );
+        }
+    }
+
     async handleOrderEvent(eventData) {
         try {
             if (this.orderCache.long >= this.strategy.orderLimit) {
@@ -72,30 +82,32 @@ module.exports = class Instance {
 
             this.dataHandler.insert(eventData);
 
+
+            //todo if statement could be removed by placing handlers in a dictionary
+            //todo -- like this: this.handlers[event.side]();
             if (eventData.side === "BUY") {
-                
-                //* Create generator if one does not currently exist
-                if (!this.orderCache.hasOwnProperty(eventData.orderId)) {
-                    this.orderCache[marketBuyOrder.orderID] = GeneratorFactory.createIterator(
-                        marketBuyOrder.price,
-                        this.strategy.increasePercentage
-                    );
-                }
-
-                const limitSellOrder = await this.placeLimitSellOrder(eventData);
-                this.orderCache.renameProp(eventData.orderId, limitSellOrder.orderId);
-
+                this.handleBuy(eventData);
             } else if (eventData.side === "SELL") {
-
-                const isInPriceRange = GeneratorFactory.run(this.orderCache[eventData.orderId], eventData.price);
-                if (isInPriceRange) {
-                    //* Using market buy here instead to avoid things stalling out and never filling a buy order
-                    this.placeMarketBuyOrder(eventData);
-                }
-                
+                this.handleSell(eventData);
             }
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
+        }
+    }
+
+    async handleBuy(eventData) {
+        //* Create generator if one does not currently exist
+        createGeneratorForOrder(eventData);
+        const limitSellOrder = await this.placeLimitSellOrder(eventData);
+        //todo i do not like this prop-name changing...
+        this.orderCache.renameProp(eventData.orderId, limitSellOrder.orderId);
+    }
+
+    async handleSell(eventData) {
+        const isInPriceRange = GeneratorFactory.run(this.orderCache[eventData.orderId], eventData.price);
+        if (isInPriceRange) {
+            //* Using market buy here instead to avoid things stalling out and never filling a buy order
+            this.placeMarketBuyOrder(eventData);
         }
     }
 
@@ -105,10 +117,14 @@ module.exports = class Instance {
      */
     async placeOrder(options) {
         try {
-            let orderResponse = await this.client.order(correctTickAndStep(options));
+            let correctedOptions = this.utility.correctTickAndStep(options);
+            let orderResponse = await this.client.order(correctedOptions);
             let price = correctedOptions.price || orderResponse.fills[0].price;
             this.logger.info(
-                `Placing ${orderResponse.symbol} "${orderResponse.side}" P:${price} | Q: ${orderResponse.origQty} | T: ${Calc.mul(price, orderResponse.origQty)}`
+                `Placing ${orderResponse.symbol} "${orderResponse.side}" P:${price} | Q: ${orderResponse.origQty} | T: ${Calc.mul(
+                    price,
+                    orderResponse.origQty
+                )}`
             );
             this.dataHandler.insert(orderResponse);
 
@@ -120,7 +136,7 @@ module.exports = class Instance {
 
     async placeMarketBuyOrder(eventData) {
         try {
-            const buyQuantity = getBuyQuantity(eventData);
+            const buyQuantity = this.utility.getBuyQuantity(eventData);
             let orderResponse = this.placeOrder({
                 symbol: eventData.symbol,
                 quantity: buyQuantity,
@@ -142,7 +158,7 @@ module.exports = class Instance {
      */
     async placeLimitSellOrder(eventData) {
         try {
-            const sellPrice = getSellPrice(eventData);
+            const sellPrice = this.utility.getSellPrice(eventData);
             let orderResponse = this.placeOrder({
                 symbol: eventData.symbol,
                 price: sellPrice,
@@ -157,38 +173,4 @@ module.exports = class Instance {
     }
 }
 
-function getBuyQuantity(eventData) {
-    const pairType = this.getPairType(eventData.symbol);
-    const startingValue = this.strategy[`starting${pairType}`];
-
-    const bestBidPrice = await this.getBestBidPrice(eventData.symbol);
-    const buyQuantity = Calc.divBy(startingValue, bestBidPrice);
-    return buyQuantity;
-}
-
-function getSellPrice(eventData) {
-    let tickSize = exchangeInfo[eventData.symbol].tickSize;
-    let increaseAmount = Calc.mul(tickSize, this.strategy.numTickIncrease);
-    this.logger.debug(`increaseAmount: ${increaseAmount}`);
-    let buyPrice = eventData.orderType === "MARKET" ? eventData.priceLastTrade : eventData.price;
-    this.logger.debug(`buyPrice: ${buyPrice}`);
-    let sellPrice = Calc.add(increaseAmount, buyPrice);
-    return sellPrice;
-}
-
-function correctTickAndStep(options) {
-    try {
-        //* Market orders will not be including a 'price' property
-        if (options.hasOwnProperty("price")) {
-            options.price = Calc.roundToTickSize(options.price, exchangeInfo[options.symbol].tickSize);
-        }
-
-        if (options.hasOwnProperty("quantity")) {
-            options.quantity = Calc.roundToStepSize(options.quantity, exchangeInfo[options.symbol].stepSize);
-        }
-
-        return options;
-    } catch (e) {
-        this.logger.error(`correctTickAndStep: ${e.message}`);
-    }
-}
+module.exports = Instance;
