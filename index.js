@@ -1,7 +1,6 @@
 const Instance = require("./Instance.js");
 const Users = require("./data/Users.js");
 const tomStrategy = require('./data/Strategies.js');
-// const Instance = require('./instance');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
 const instanceTom = new Instance(
@@ -38,11 +37,3 @@ instanceTom.init();
 //         console.log(t.data);
 //     }, 5000);
 // })()
-
-
-// const clientPhil = instance({
-//     apiKey: process.env.API_KEY_PHIL,
-//     apiSecret: process.env.API_SECRET_PHIL,
-//     strategy: require('./strategies/philStrategy.json')
-// });
-// clientPhil.init();
