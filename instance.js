@@ -34,7 +34,7 @@ class Instance {
             await this.utility.updateExchangeInfo();
             this.websockets.user = this.client.ws.user((eventData) => {
                 if (eventData.orderStatus === "FILLED") {
-                    this.handleOrderEvent(eventData);
+                    this.handleFilledExecutionReport(eventData);
                 }
             });
             this.logger.info(`Instance initialized`);
@@ -52,7 +52,7 @@ class Instance {
      */
     startupActions() {
         try {
-            // this.placeMarketBuyOrder({ symbol: "ADABTC" });
+            this.placeMarketBuyOrder({ symbol: "ADABTC" });
         } catch (e) {
             this.logger.error(`startupActions: ${e.message}`);
         }
@@ -64,89 +64,114 @@ class Instance {
         await this.utility.cancelAllOpenBuyOrders();
     }
 
-    createGeneratorForOrder(eventData) {
-        if (!this.orderCache.hasOwnProperty(eventData.orderId)) {
-            this.orderCache[eventData.orderID] = GeneratorFactory.createIterator(
-                eventData.price,
+    /**
+     * 
+     * @param {ExecutionReport} executionReport 
+     */
+    createGeneratorForOrder(executionReport) {
+        if (!this.orderCache.hasOwnProperty(executionReport.orderId)) {
+            this.orderCache[executionReport.orderID] = GeneratorFactory.createIterator(
+                executionReport.price,
                 this.strategy.increasePercentage
             );
         }
     }
 
-    async handleOrderEvent(eventData) {
+    /**
+     * 
+     * @param {ExecutionReport} executionReport 
+     */
+    async handleFilledExecutionReport(executionReport) {
         try {
-            if (this.orderCache.long >= this.strategy.orderLimit) {
-                this.completeSession();
-                return;
-            }
+            // if (this.orderCache.length >= this.strategy.orderLimit) {
+            //     this.completeSession();
+            //     return;
+            // }
 
-            this.dataHandler.insert(eventData);
-
+            this.dataHandler.insert(executionReport);
 
             //todo if statement could be removed by placing handlers in a dictionary
             //todo -- like this: this.handlers[event.side]();
-            if (eventData.side === "BUY") {
-                this.handleBuy(eventData);
-            } else if (eventData.side === "SELL") {
-                this.handleSell(eventData);
+            //? are there other sides than buy/sell?
+            if (executionReport.side === "BUY") {
+                this.handleBuy(executionReport);
+            } else if (executionReport.side === "SELL") {
+                this.handleSell(executionReport);
             }
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
         }
     }
 
-    async handleBuy(eventData) {
+    /**
+     * 
+     * @param {ExecutionReport} executionReport 
+     */
+    async handleBuy(executionReport) {
         //* Create generator if one does not currently exist
-        createGeneratorForOrder(eventData);
-        const limitSellOrder = await this.placeLimitSellOrder(eventData);
+        createGeneratorForOrder(executionReport);
+        const orderResponse = await this.placeLimitSellOrder(executionReport);
+
+        this.dataHandler.insert(orderResponse);
+        
         //todo i do not like this prop-name changing...
-        this.orderCache.renameProp(eventData.orderId, limitSellOrder.orderId);
+        this.orderCache.renameProp(executionReport.orderId, orderResponse.orderId);
     }
 
-    async handleSell(eventData) {
-        const isInPriceRange = GeneratorFactory.run(this.orderCache[eventData.orderId], eventData.price);
+    /**
+     * 
+     * @param {ExecutionReport} executionReport 
+     */
+    async handleSell(executionReport) {
+        const isInPriceRange = GeneratorFactory.run(this.orderCache[executionReport.orderId], executionReport.price);
+        let order = {};
         if (isInPriceRange) {
             //* Using market buy here instead to avoid things stalling out and never filling a buy order
-            this.placeMarketBuyOrder(eventData);
+            order = await this.placeMarketBuyOrder(executionReport);
+            this.dataHandler.insert(order);
         }
     }
 
     /**
      * @description wrapper that ensures price and quantity are rounded to tick/step sizes
      * @param {*} options
+     * @returns Order
      */
     async placeOrder(options) {
         try {
             let correctedOptions = this.utility.correctTickAndStep(options);
-            let orderResponse = await this.client.order(correctedOptions);
-            let price = correctedOptions.price || orderResponse.fills[0].price;
+            let order = await this.client.order(correctedOptions);
+            let price = correctedOptions.price || order.fills[0].price;
             this.logger.info(
-                `Placing ${orderResponse.symbol} "${orderResponse.side}" P:${price} | Q: ${orderResponse.origQty} | T: ${Calc.mul(
+                `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(
                     price,
-                    orderResponse.origQty
+                    order.origQty
                 )}`
             );
-            this.dataHandler.insert(orderResponse);
-
-            return orderResponse;
+            return order;
         } catch (e) {
             this.logger.error(`placeOrder: ${e.message}`);
         }
     }
 
-    async placeMarketBuyOrder(eventData) {
+    /**
+     * 
+     * @param {ExecutionReport} executionReport 
+     * @returns Order
+     */
+    async placeMarketBuyOrder(executionReport) {
         try {
-            const buyQuantity = this.utility.getBuyQuantity(eventData);
-            let orderResponse = this.placeOrder({
-                symbol: eventData.symbol,
+            const buyQuantity = this.utility.getBuyQuantity(executionReport);
+            let order = this.placeOrder({
+                symbol: executionReport.symbol,
                 quantity: buyQuantity,
                 type: "MARKET",
                 side: "BUY",
             });
-            return orderResponse;
+            return order;
         } catch (e) {
             this.logger.error(
-                `placeMarketBuyOrder: ${e.message}. Tried to place an ${eventData.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
+                `placeMarketBuyOrder: ${e.message}. Tried to place an ${executionReport.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
             );
         }
     }
@@ -154,21 +179,22 @@ class Instance {
     /**
      * @description used in response to a filled buy order. adds a number of ticks specified by the strategy
      * and relists the same quantity in the buy order with the new increased price
-     * @param {*} eventData
+     * @param {ExecutionReport} executionReport
+     * @returns Order
      */
-    async placeLimitSellOrder(eventData) {
+    async placeLimitSellOrder(executionReport) {
         try {
-            const sellPrice = this.utility.getSellPrice(eventData);
-            let orderResponse = this.placeOrder({
-                symbol: eventData.symbol,
+            const sellPrice = this.utility.getSellPrice(executionReport);
+            let order = this.placeOrder({
+                symbol: executionReport.symbol,
                 price: sellPrice,
-                quantity: eventData.quantity,
+                quantity: executionReport.quantity,
                 type: "LIMIT",
                 side: "SELL",
             });
-            return orderResponse;
+            return order;
         } catch (e) {
-            this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${eventData.symbol} order.`);
+            this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${executionReport.symbol} order.`);
         }
     }
 }
