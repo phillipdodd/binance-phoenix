@@ -26,6 +26,18 @@ it('Can query a document', async () => {
     expect(queriedDoc).toBeDefined();
 });
 
+it("Can update a document", async () => {
+    const newQuantityValue = 1;
+    await testDataHandler.insert(mockEventData);
+    //! Note: returnUpdatedDocs options is not MongoDB compatible
+    let updatedDoc = await testDataHandler.update(
+        { orderId: "12345" },
+        { $set: { quantity: newQuantityValue } },
+        { returnUpdatedDocs: true }
+    );
+    expect(updatedDoc.quantity).toBe(newQuantityValue);
+});
+
 it('Can remove a document', async () => {
     const response = await testDataHandler.remove({ orderId: "12345" }, { multi: true });
     expect(response).toBeGreaterThan(0);
