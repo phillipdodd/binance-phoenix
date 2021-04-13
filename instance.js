@@ -44,7 +44,7 @@ class Instance {
 
             setTimeout(() => {
                 this.startupActions();
-            }, 10000);
+            }, 1000);
         } catch (e) {
             this.logger.error(`init: ${e.message}`);
         }
@@ -112,7 +112,7 @@ class Instance {
      */
     async handleBuy(executionReport) {
         //* Create generator if one does not currently exist
-        createGeneratorForOrder(executionReport);
+        this.createGeneratorForOrder(executionReport);
         const orderResponse = await this.placeLimitSellOrder(executionReport);
 
         this.dataHandler.insert(orderResponse);
@@ -164,7 +164,7 @@ class Instance {
      */
     async placeMarketBuyOrder(executionReport) {
         try {
-            const buyQuantity = this.utility.getBuyQuantity(executionReport);
+            const buyQuantity = await this.utility.getBuyQuantity(executionReport);
             let order = this.placeOrder({
                 symbol: executionReport.symbol,
                 quantity: buyQuantity,
