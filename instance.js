@@ -1,3 +1,4 @@
+require('dotenv').config();
 const Binance = require("us-binance-api-node");
 //todo calc is only used in that one log statement, could likely be ultimately removed
 const Calc = require("./lib/Calc.js");
@@ -19,11 +20,13 @@ class Instance {
             apiSecret: process.env[`API_SECRET_${user}`],
             getTime: Date.now,
         });
+
+        
         this.user = user;
         this.strategy = strategy;
-
+        
         this.orderCache = {};
-
+        
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
         this.utility = new InstanceUtility(this);
