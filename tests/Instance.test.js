@@ -15,7 +15,6 @@ it('Can successfully open/close a user websocket', async () => {
     const clean = await instance.client.ws.user((eventData) => { });
     expect(clean).toBeDefined();
     clean();
-    console.log(clean);
 });
 
 
