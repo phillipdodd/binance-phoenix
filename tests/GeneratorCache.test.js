@@ -27,3 +27,7 @@ describe('Can update generator key', () => {
         expect(generatorCache.getGeneratorForOrderID(orderIdA)).toBeUndefined();
     });
 });
+
+it('Can get total number of generators', () => {
+    expect(generatorCache.getTotalNumberOfGenerators()).toBe(1);
+});
