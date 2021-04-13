@@ -6,6 +6,7 @@ const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
 const GeneratorFactory = require('./lib/GeneratorFactory.js');
+const GeneratorCache = require('./lib/GeneratorCache.js');
 
 class Instance {
     /**
@@ -25,7 +26,7 @@ class Instance {
         this.user = user;
         this.strategy = strategy;
         
-        this.orderCache = {};
+        this.generatorCache = new GeneratorCache();
         
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
@@ -72,11 +73,12 @@ class Instance {
      * @param {ExecutionReport} executionReport 
      */
     createGeneratorForOrder(executionReport) {
-        if (!this.orderCache.hasOwnProperty(executionReport.orderId)) {
-            this.orderCache[executionReport.orderID] = GeneratorFactory.createIterator(
+        if (!this.generatorCache.getGeneratorForOrderID(executionReport.orderId)) {
+            const generator = GeneratorFactory.createIterator(
                 executionReport.price,
                 this.strategy.increasePercentage
             );
+            this.generatorCache.addGeneratorForOrderID(generator, executionReport.orderID);
         }
     }
 
@@ -86,7 +88,7 @@ class Instance {
      */
     async handleFilledExecutionReport(executionReport) {
         try {
-            // if (this.orderCache.length >= this.strategy.orderLimit) {
+            // if (this.generatorCache.getTotalNumberOfGenerators() >= this.strategy.orderLimit) {
             //     this.completeSession();
             //     return;
             // }
@@ -97,9 +99,11 @@ class Instance {
             //todo -- like this: this.handlers[event.side]();
             //? are there other sides than buy/sell?
             if (executionReport.side === "BUY") {
-                this.handleBuy(executionReport);
+                this.handleBuy(executionReport)
+                    .catch(err => console.error(err));
             } else if (executionReport.side === "SELL") {
-                this.handleSell(executionReport);
+                this.handleSell(executionReport)
+                    .catch(err => console.error(err));
             }
         } catch (e) {
             this.logger.error(`handleOrderEvent: ${e.message}`);
@@ -117,8 +121,7 @@ class Instance {
 
         this.dataHandler.insert(orderResponse);
         
-        //todo i do not like this prop-name changing...
-        this.orderCache.renameProp(executionReport.orderId, orderResponse.orderId);
+        this.generatorCache.updateGeneratorKey(executionReport.orderId, orderResponse.orderId);
     }
 
     /**
@@ -126,12 +129,20 @@ class Instance {
      * @param {ExecutionReport} executionReport 
      */
     async handleSell(executionReport) {
-        const isInPriceRange = GeneratorFactory.run(this.orderCache[executionReport.orderId], executionReport.price);
-        let order = {};
-        if (isInPriceRange) {
-            //* Using market buy here instead to avoid things stalling out and never filling a buy order
-            order = await this.placeMarketBuyOrder(executionReport);
-            this.dataHandler.insert(order);
+        try {
+            const isInPriceRange = GeneratorFactory.run(
+                this.generatorCache.getGeneratorForOrderID(executionReport.orderId),
+                executionReport.price
+            );
+            let order = {};
+            if (isInPriceRange) {
+                //* Using market buy here instead to avoid things stalling out and never filling a buy order
+                order = await this.placeMarketBuyOrder(executionReport);
+                this.dataHandler.insert(order);
+            }
+        } catch (err) {
+            this.logger.error(`handleSell: ${err.message}`);
+            throw err;
         }
     }
 
