@@ -78,7 +78,7 @@ class Instance {
                 executionReport.price,
                 this.strategy.increasePercentage
             );
-            this.generatorCache.addGeneratorForOrderID(generator, executionReport.orderID);
+            this.generatorCache.addGeneratorForOrderID(generator, executionReport.orderId);
         }
     }
 
@@ -141,6 +141,7 @@ class Instance {
                 this.dataHandler.insert(order);
             }
         } catch (err) {
+            console.dir(this.generatorCache.generators);
             this.logger.error(`handleSell: ${err.message}`);
             throw err;
         }
