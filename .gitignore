@@ -1,5 +1,8 @@
 datastores
 
+scratchpad/executionReports.csv
+scratchpad/orderReports.csv
+
 # Notes
 docs
 strategies
