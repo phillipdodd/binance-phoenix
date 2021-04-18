@@ -22,7 +22,6 @@ class Instance {
             getTime: Date.now,
         });
 
-        
         this.user = user;
         this.strategy = strategy;
         
@@ -81,11 +80,11 @@ class Instance {
      */
     createGeneratorForOrder(executionReport) {
         try {
-            if (!this.generatorCache.getGeneratorForOrderID(executionReport.orderId)) {
-                const generator = GeneratorFactory.createIterator(
-                    executionReport.price,
-                    this.strategy.increasePercentage
-                );
+            this.logger.info(`createGeneratorForOrder(): executionReport.orderId is ${executionReport.orderId}`);
+            let generator = this.generatorCache.getGeneratorForOrderID(executionReport.orderId);
+            this.logger.info(`createGeneratorForOrder(): generator is ${generator}`);
+            if (!generator) {
+                generator = GeneratorFactory.createIterator(getPriceValue(executionReport), this.strategy.increasePercentage);
                 this.generatorCache.addGeneratorForOrderID(generator, executionReport.orderId);
             }
         } catch (err) {
@@ -130,9 +129,9 @@ class Instance {
             //* Create generator if one does not currently exist
             this.createGeneratorForOrder(executionReport);
             const orderResponse = await this.placeLimitSellOrder(executionReport);
-    
+
             this.dataHandler.insert(orderResponse);
-            
+
             this.generatorCache.updateGeneratorKey(executionReport.orderId, orderResponse.orderId);
         } catch (err) {
            this.logger.error(`handleBuy: ${err.message}`);
@@ -155,6 +154,7 @@ class Instance {
             if (isInPriceRange) {
                 //* Using market buy here instead to avoid things stalling out and never filling a buy order
                 order = await this.placeMarketBuyOrder(executionReport);
+                order.eventType = 'placedOrderResponse';
                 this.dataHandler.insert(order);
             }
         } catch (err) {
@@ -233,6 +233,14 @@ class Instance {
             this.logger.error(`placeLimitSellOrder: ${err.message}. Tried to place an ${executionReport.symbol} order.`);
             throw err;
         }
+    }
+}
+
+function getPriceValue({ price, priceLastTrade } = {}) {
+    if (price && Number(price)) {
+        return price;
+    } else {
+        return priceLastTrade;
     }
 }
 
