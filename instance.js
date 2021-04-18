@@ -129,9 +129,6 @@ class Instance {
             //* Create generator if one does not currently exist
             this.createGeneratorForOrder(executionReport);
             const orderResponse = await this.placeLimitSellOrder(executionReport);
-
-            this.dataHandler.insert(orderResponse);
-
             this.generatorCache.updateGeneratorKey(executionReport.orderId, orderResponse.orderId);
         } catch (err) {
            this.logger.error(`handleBuy: ${err.message}`);
