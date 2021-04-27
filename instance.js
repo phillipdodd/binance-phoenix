@@ -5,8 +5,6 @@ const Calc = require("./lib/Calc.js");
 const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
-const GeneratorFactory = require('./lib/GeneratorFactory.js');
-const GeneratorCache = require('./lib/GeneratorCache.js');
 
 class Instance {
     /**
@@ -24,8 +22,6 @@ class Instance {
 
         this.user = user;
         this.strategy = strategy;
-        
-        this.generatorCache = new GeneratorCache();
         
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
@@ -78,31 +74,8 @@ class Instance {
      * 
      * @param {ExecutionReport} executionReport 
      */
-    createGeneratorForOrder(executionReport) {
-        try {
-            this.logger.info(`createGeneratorForOrder(): executionReport.orderId is ${executionReport.orderId}`);
-            let generator = this.generatorCache.getGeneratorForOrderID(executionReport.orderId);
-            this.logger.info(`createGeneratorForOrder(): generator is ${generator}`);
-            if (!generator) {
-                generator = GeneratorFactory.createIterator(getPriceValue(executionReport), this.strategy.increasePercentage);
-                this.generatorCache.addGeneratorForOrderID(generator, executionReport.orderId);
-            }
-        } catch (err) {
-           this.logger.error(`createGeneratorForOrder: ${err.message}`);
-           throw err;
-        }
-    }
-
-    /**
-     * 
-     * @param {ExecutionReport} executionReport 
-     */
     async handleFilledExecutionReport(executionReport) {
         try {
-            // if (this.generatorCache.getTotalNumberOfGenerators() >= this.strategy.orderLimit) {
-            //     this.completeSession();
-            //     return;
-            // }
 
             this.dataHandler.insert(executionReport);
 
@@ -126,10 +99,7 @@ class Instance {
      */
     async handleBuy(executionReport) {
         try {
-            //* Create generator if one does not currently exist
-            this.createGeneratorForOrder(executionReport);
-            const orderResponse = await this.placeLimitSellOrder(executionReport);
-            this.generatorCache.updateGeneratorKey(executionReport.orderId, orderResponse.orderId);
+            await this.placeLimitSellOrder(executionReport);
         } catch (err) {
            this.logger.error(`handleBuy: ${err.message}`);
            throw err;
@@ -143,19 +113,12 @@ class Instance {
     async handleSell(executionReport) {
         try {
             this.logger.info("handleSell() beginning");
-            const generator = this.generatorCache.getGeneratorForOrderID(executionReport.orderId);
-            if (!generator) {this.logger.error(`No generator returned for orderId ${executionReport.orderId}`)}
-            const isInPriceRange = GeneratorFactory.run(generator, executionReport.price);
-            this.logger.info(`Price of ${executionReport.price} returned ${isInPriceRange} for isInPriceRange`);
-            let order = {};
-            if (isInPriceRange) {
-                //* Using market buy here instead to avoid things stalling out and never filling a buy order
-                order = await this.placeMarketBuyOrder(executionReport);
-                order.eventType = 'placedOrderResponse';
-                this.dataHandler.insert(order);
-            }
+
+            //* Using market buy here instead to avoid things stalling out and never filling a buy order
+            let order = await this.placeMarketBuyOrder(executionReport);
+            order.eventType = 'placedOrderResponse';
+            this.dataHandler.insert(order);
         } catch (err) {
-            console.dir(this.generatorCache.generators);
             this.logger.error(`handleSell: ${err.message}`);
             throw err;
         }
