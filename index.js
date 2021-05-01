@@ -1,6 +1,6 @@
 const Instance = require("./Instance.js");
 const Users = require("./data/Users.js");
-const { tomStrategy } = require('./data/Strategies.js');
+const { tomStrategy, philStrategy } = require('./data/Strategies.js');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
 const instanceTom = new Instance(
@@ -8,6 +8,12 @@ const instanceTom = new Instance(
     tomStrategy
 );
 instanceTom.init();
+
+// const instancePhil = new Instance(
+//     Users.Phil,
+//     philStrategy
+// );
+// instancePhil.init();
 
 // const instancePhil = new Instance(
 //     process.env.API_KEY_PHIL,

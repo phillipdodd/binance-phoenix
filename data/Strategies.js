@@ -164,8 +164,9 @@ const Strategies = {
         },
     },
     philStrategy: {
-        
-    }
-}
+        startingUSD: 20,
+        numTickIncrease: 3
+    },
+};
 
 module.exports = Strategies;
