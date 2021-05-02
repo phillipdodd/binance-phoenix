@@ -1,12 +1,8 @@
 const Instance = require("./Instance.js");
 const Users = require("./data/Users.js");
-const { tomStrategy, philStrategy } = require('./data/Strategies.js');
 // const SimpleMovingAverageTracker = require('./indicators/simpleMovingAverageTracker');
 
-const instanceTom = new Instance(
-    Users.Tom,
-    tomStrategy
-);
+const instanceTom = new Instance(Users.Tom);
 instanceTom.init();
 
 // const instancePhil = new Instance(

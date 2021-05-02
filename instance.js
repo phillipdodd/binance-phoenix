@@ -6,6 +6,7 @@ const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
 const Config = require("./data/Config.js");
+const Strategies = require('./data/Strategies.js');
 
 class Instance {
     /**
@@ -22,7 +23,7 @@ class Instance {
         });
 
         this.user = user;
-        this.strategy = strategy;
+        this.strategy = Strategies[user];
 
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
