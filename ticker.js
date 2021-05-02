@@ -1,4 +1,4 @@
-const logger = require("./lib/myWinston")("ticker");
+
 
 class Ticker {
     
@@ -14,7 +14,7 @@ class Ticker {
                 this.data[tickerData.symbol] = tickerData;
             });
         } catch (e) {
-            logger.error(e.message);
+            console.error(e.message);
         }
     }
 }
