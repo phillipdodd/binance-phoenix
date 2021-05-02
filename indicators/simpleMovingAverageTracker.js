@@ -1,4 +1,5 @@
 const tulind = require('tulind');
+const BaseLogger = require("../lib/BaseLogger.js");
 
 class SimpleMovingAverageTracker {
 
@@ -18,7 +19,7 @@ class SimpleMovingAverageTracker {
         this.data = [];
         this.sma = 0.00;
 
-        this.logger = require('../lib/myWinston')(`SimpleMovingAverageTracker (${symbol})`);
+        this.logger = new BaseLogger(`SimpleMovingAverageTracker (${symbol})`).init();
     }
 
     init() {
@@ -33,9 +34,7 @@ class SimpleMovingAverageTracker {
                             //! NOTE: Using closePrice. Seems to be the most common choice when using SMA
                             this.data.push(candle.close);
                             
-                            // if (this.data.length > this.periodNum[0]) {
-                            //     this.data.shift();
-                            // }
+
                             //* Wait until enough data is in the array
                             if (this.data.length >= this.periodNum[0]) {
                                 this.sma = this.calculateSMA();
