@@ -25,6 +25,8 @@ class Instance {
         this.user = user;
         this.strategy = Strategies[user];
 
+        this.symbolLimits = {};
+
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
         this.utility = new InstanceUtility(this);
@@ -54,14 +56,23 @@ class Instance {
      */
     async startupActions() {
         try {
-            const order = await this.placeLimitBuyOrder("ADABTC");
-            this.createResetTimer(order.symbol, order.orderId);
-
-            const orderb = await this.placeLimitBuyOrder("DOGEUSD");
-            this.createResetTimer(orderb.symbol, orderb.orderId);
+            for (const pair of this.strategy.initPairs) {
+                await this.initPair(pair);
+            }
         } catch (err) {
             this.logger.error(`startupActions: ${err.message}`);
             throw err;
+        }
+    }
+
+    async initPair(symbol) {
+        try {
+            const { orderId } = await this.placeLimitBuyOrder(symbol);
+            this.createResetTimer(symbol, orderId);
+            this.symbolLimits[symbol] = this.strategy.orderLimit;
+        } catch (err) {
+           this.logger.error(`initPair: ${err.message}`);
+           throw err;
         }
     }
 
@@ -82,15 +93,10 @@ class Instance {
 
             //todo if statement could be removed by placing handlers in a dictionary
             //todo -- like this: this.handlers[event.side]();
-            //? are there other sides than buy/sell?
             if (executionReport.side === "BUY") {
-                this.handleBuy(executionReport).catch((err) => {
-                    throw err;
-                });
+                this.handleBuy(executionReport).catch((err) => { throw err; });
             } else if (executionReport.side === "SELL") {
-                this.handleSell(executionReport).catch((err) => {
-                    throw err;
-                });
+                this.handleSell(executionReport).catch((err) => { throw err; });
             }
         } catch (err) {
             this.logger.error(`handleOrderEvent: ${err.message}`);
@@ -102,6 +108,7 @@ class Instance {
         try {
             const order = await this.placeLimitSellOrder(executionReport).catch(err => { throw err });
             order.eventType = "placedOrderResponse";
+
             this.dataHandler.insert(order);
         } catch (err) {
             this.logger.error(`handleBuy: ${err.message}`);
@@ -112,44 +119,53 @@ class Instance {
     async handleSell({ symbol } = {}) {
         try {
             const order = await this.placeLimitBuyOrder(symbol).catch(err => { throw err });
-            
+            if (!order) return;
+
             this.createResetTimer(symbol, order.orderId);
 
             order.eventType = "placedOrderResponse";
             this.dataHandler.insert(order);
+
+            this.logger.info(JSON.stringify(`symbolLimits: ${JSON.stringify(this.symbolLimits)}`));
         } catch (err) {
             this.logger.error(`handleSell: ${err.message}`);
             throw err;
         }
     }
 
-    createResetTimer(symbol, orderId) {
+    async createResetTimer(symbol, orderId) {
         try {
-            this.logger.info(`creating reset timer. symbol: ${symbol} | orderId: ${orderId}`);
             setTimeout(async () => {
-                const isOrderFilled = await this.utility.isOrderFilled(symbol, orderId);
+                const isOrderFilled = await this.utility.isOrderFilled(symbol, orderId).catch(err => { throw err; });
                 if (!isOrderFilled) {
-                    this.logger.info(`Resetting order ${orderId}`);
-                    await this.utility.cancelOrder(symbol, orderId);
-                    this.placeLimitBuyOrder(symbol);
+                    this.logger.info(`Resetting ${symbol} ${orderId}`);
+                    await this.utility.cancelOrder(symbol, orderId).catch(err => { throw err; });
+                    const newOrder = await this.placeLimitBuyOrder(symbol).catch(err => { throw err; });
+                    this.createResetTimer(symbol, newOrder.orderId);
                 }
             }, Config.resetTime);
         } catch (err) {
-           this.logger.error(`createResetTimer: ${err.message}`);
-           throw err;
+            this.logger.error(`createResetTimer: ${err.message}`);
+            throw err;
         }
     }
 
     async placeLimitBuyOrder(symbol) {
+        
+        if (this.symbolLimits[symbol] < 1) return;
+
         const price = await this.utility.getBestBidPrice(symbol);
         const quantity = await this.utility.getBuyQuantity(symbol, price);
-        return await this.placeOrder({
+        const order = await this.placeOrder({
             symbol,
             quantity,
             price,
             type: "LIMIT",
             side: "BUY",
         });
+
+        this.symbolLimits[symbol]--;
+        return order;
     }
 
     async placeLimitSellOrder(executionReport) {
@@ -178,7 +194,8 @@ class Instance {
             let order = await this.client.order(correctedOptions);
             let price = correctedOptions.price || order.fills[0].price;
             this.logger.info(
-                `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
+                `Placing ${order.symbol} "${order.side}" - ${price}`
+                // `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
             );
             return order;
         } catch (err) {
