@@ -1,4 +1,4 @@
-const BaseLogger = require("./BaseLogger.js");
+const BaseLogger = require("../lib/BaseLogger.js");
 const logger = new BaseLogger("GeneratorCache").init();
 
 class GeneratorCache {

@@ -1,5 +1,5 @@
-const Calc = require('./Calc.js');
-const BaseLogger = require("./BaseLogger.js");
+const Calc = require('../lib/Calc.js');
+const BaseLogger = require("../lib/BaseLogger.js");
 const logger = new BaseLogger("GeneratorFactory").init();
 module.exports = class GeneratorFactory {
 
