@@ -5,16 +5,10 @@ const Calc = require("./lib/Calc.js");
 const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
-const Config = require("./data/Config.js");
-const Strategies = require('./data/Strategies.js');
+const { config, strategies } = require('./data/constants.js');
 
 class Instance {
-    /**
-     *
-     * @param {string} user
-     * @param {object} strategy
-     */
-    constructor(user, strategy) {
+    constructor(user) {
         this.websockets = {};
         this.client = Binance.default({
             apiKey: process.env[`API_KEY_${user}`],
@@ -23,7 +17,7 @@ class Instance {
         });
 
         this.user = user;
-        this.strategy = Strategies[user];
+        this.strategy = strategies[user];
 
         this.symbolLimits = {};
 
@@ -143,7 +137,7 @@ class Instance {
                     const newOrder = await this.placeLimitBuyOrder(symbol).catch(err => { throw err; });
                     this.createResetTimer(symbol, newOrder.orderId);
                 }
-            }, Config.resetTime);
+            }, config.resetTime);
         } catch (err) {
             this.logger.error(`createResetTimer: ${err.message}`);
             throw err;

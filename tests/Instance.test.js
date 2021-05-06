@@ -1,8 +1,7 @@
 const Instance = require('../Instance.js');
-const Users = require('../data/Users.js');
-const { tomStrategy } = require("../data/Strategies.js");
+const { users, strategies } = require('../data/constants.js');
 
-const instance = new Instance(Users.Tom, tomStrategy);
+const instance = new Instance(users.tom);
 
 it('Can successfully create an instance', () => {
     expect(instance).toBeDefined();
