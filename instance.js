@@ -5,7 +5,8 @@ const Calc = require("./lib/Calc.js");
 const BaseLogger = require('./lib/BaseLogger.js');
 const InstanceUtility = require('./lib/InstanceUtility.js');
 const DataHandler = require('./lib/DataHandler.js');
-const GeneratorFactory = require('./lib/GeneratorFactory.js');
+const Config = require("./data/Config.js");
+const Strategies = require('./data/Strategies.js');
 
 class Instance {
     /**
@@ -21,12 +22,11 @@ class Instance {
             getTime: Date.now,
         });
 
-        
         this.user = user;
-        this.strategy = strategy;
-        
-        this.orderCache = {};
-        
+        this.strategy = Strategies[user];
+
+        this.symbolLimits = {};
+
         this.dataHandler = new DataHandler(user);
         this.logger = new BaseLogger(`instance_${user}`).init();
         this.utility = new InstanceUtility(this);
@@ -44,160 +44,184 @@ class Instance {
 
             setTimeout(() => {
                 this.startupActions();
-            }, 10000);
-        } catch (e) {
-            this.logger.error(`init: ${e.message}`);
+            }, 1000);
+        } catch (err) {
+            this.logger.error(`init: ${err.message}`);
+            throw err;
         }
     }
 
     /**
      * @description actions to execute a single time after instance has been initialized
      */
-    startupActions() {
+    async startupActions() {
         try {
-            this.placeMarketBuyOrder({ symbol: "ADABTC" });
-        } catch (e) {
-            this.logger.error(`startupActions: ${e.message}`);
+            for (const pair of this.strategy.initPairs) {
+                await this.initPair(pair);
+            }
+        } catch (err) {
+            this.logger.error(`startupActions: ${err.message}`);
+            throw err;
+        }
+    }
+
+    async initPair(symbol) {
+        try {
+            const { orderId } = await this.placeLimitBuyOrder(symbol);
+            this.createResetTimer(symbol, orderId);
+            this.symbolLimits[symbol] = this.strategy.orderLimit;
+        } catch (err) {
+           this.logger.error(`initPair: ${err.message}`);
+           throw err;
         }
     }
 
     async completeSession() {
-        //* Close websocket
-        this.websockets.user();
-        await this.utility.cancelAllOpenBuyOrders();
-    }
-
-    /**
-     * 
-     * @param {ExecutionReport} executionReport 
-     */
-    createGeneratorForOrder(executionReport) {
-        if (!this.orderCache.hasOwnProperty(executionReport.orderId)) {
-            this.orderCache[executionReport.orderID] = GeneratorFactory.createIterator(
-                executionReport.price,
-                this.strategy.increasePercentage
-            );
+        try {
+            //* Close websocket
+            this.websockets.user();
+            await this.utility.cancelAllOpenBuyOrders();
+        } catch (err) {
+            this.logger.error(`completeSession: ${err.message}`);
+            throw err;
         }
     }
 
-    /**
-     * 
-     * @param {ExecutionReport} executionReport 
-     */
     async handleFilledExecutionReport(executionReport) {
         try {
-            // if (this.orderCache.length >= this.strategy.orderLimit) {
-            //     this.completeSession();
-            //     return;
-            // }
-
             this.dataHandler.insert(executionReport);
 
             //todo if statement could be removed by placing handlers in a dictionary
             //todo -- like this: this.handlers[event.side]();
-            //? are there other sides than buy/sell?
             if (executionReport.side === "BUY") {
-                this.handleBuy(executionReport);
+                this.handleBuy(executionReport).catch((err) => { throw err; });
             } else if (executionReport.side === "SELL") {
-                this.handleSell(executionReport);
+                this.handleSell(executionReport).catch((err) => { throw err; });
             }
-        } catch (e) {
-            this.logger.error(`handleOrderEvent: ${e.message}`);
+        } catch (err) {
+            this.logger.error(`handleOrderEvent: ${err.message}`);
+            throw err;
         }
     }
 
-    /**
-     * 
-     * @param {ExecutionReport} executionReport 
-     */
     async handleBuy(executionReport) {
-        //* Create generator if one does not currently exist
-        createGeneratorForOrder(executionReport);
-        const orderResponse = await this.placeLimitSellOrder(executionReport);
+        try {
+            const order = await this.placeLimitSellOrder(executionReport).catch(err => { throw err });
+            order.eventType = "placedOrderResponse";
 
-        this.dataHandler.insert(orderResponse);
-        
-        //todo i do not like this prop-name changing...
-        this.orderCache.renameProp(executionReport.orderId, orderResponse.orderId);
-    }
-
-    /**
-     * 
-     * @param {ExecutionReport} executionReport 
-     */
-    async handleSell(executionReport) {
-        const isInPriceRange = GeneratorFactory.run(this.orderCache[executionReport.orderId], executionReport.price);
-        let order = {};
-        if (isInPriceRange) {
-            //* Using market buy here instead to avoid things stalling out and never filling a buy order
-            order = await this.placeMarketBuyOrder(executionReport);
             this.dataHandler.insert(order);
+        } catch (err) {
+            this.logger.error(`handleBuy: ${err.message}`);
+            throw err;
         }
     }
 
-    /**
-     * @description wrapper that ensures price and quantity are rounded to tick/step sizes
-     * @param {*} options
-     * @returns Order
-     */
+    async handleSell({ symbol } = {}) {
+        try {
+            const order = await this.placeLimitBuyOrder(symbol).catch(err => { throw err });
+            if (!order) return;
+
+            this.createResetTimer(symbol, order.orderId);
+
+            order.eventType = "placedOrderResponse";
+            this.dataHandler.insert(order);
+
+            this.logger.info(JSON.stringify(`symbolLimits: ${JSON.stringify(this.symbolLimits)}`));
+        } catch (err) {
+            this.logger.error(`handleSell: ${err.message}`);
+            throw err;
+        }
+    }
+
+    async createResetTimer(symbol, orderId) {
+        try {
+            setTimeout(async () => {
+                const isOrderFilled = await this.utility.isOrderFilled(symbol, orderId).catch(err => { throw err; });
+                if (!isOrderFilled) {
+                    this.logger.info(`Resetting ${symbol} ${orderId}`);
+                    await this.utility.cancelOrder(symbol, orderId).catch(err => { throw err; });
+                    const newOrder = await this.placeLimitBuyOrder(symbol).catch(err => { throw err; });
+                    this.createResetTimer(symbol, newOrder.orderId);
+                }
+            }, Config.resetTime);
+        } catch (err) {
+            this.logger.error(`createResetTimer: ${err.message}`);
+            throw err;
+        }
+    }
+
+    async placeLimitBuyOrder(symbol) {
+        
+        if (this.symbolLimits[symbol] < 1) return;
+
+        const price = await this.utility.getBestBidPrice(symbol);
+        const quantity = await this.utility.getBuyQuantity(symbol, price);
+        const order = await this.placeOrder({
+            symbol,
+            quantity,
+            price,
+            type: "LIMIT",
+            side: "BUY",
+        });
+
+        this.symbolLimits[symbol]--;
+        return order;
+    }
+
+    async placeLimitSellOrder(executionReport) {
+        try {
+            const { symbol, quantity } = executionReport;
+            const price = await this.utility.getSellPrice(executionReport);
+            let order = this.placeOrder({
+                symbol,
+                price,
+                quantity,
+                type: "LIMIT",
+                side: "SELL",
+            }).catch((err) => {
+                throw err;
+            });
+            return order;
+        } catch (err) {
+            this.logger.error(`placeLimitSellOrder: ${err.message}. Tried to place an ${executionReport.symbol} order.`);
+            throw err;
+        }
+    }
+
     async placeOrder(options) {
         try {
             let correctedOptions = this.utility.correctTickAndStep(options);
             let order = await this.client.order(correctedOptions);
             let price = correctedOptions.price || order.fills[0].price;
             this.logger.info(
-                `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(
-                    price,
-                    order.origQty
-                )}`
+                `Placing ${order.symbol} "${order.side}" - ${price}`
+                // `Placing ${order.symbol} "${order.side}" P:${price} | Q: ${order.origQty} | T: ${Calc.mul(price, order.origQty)}`
             );
             return order;
-        } catch (e) {
-            this.logger.error(`placeOrder: ${e.message}`);
+        } catch (err) {
+            this.logger.error(`placeOrder: ${err.message}`);
+            throw err;
         }
     }
 
-    /**
-     * 
-     * @param {ExecutionReport} executionReport 
-     * @returns Order
-     */
     async placeMarketBuyOrder(executionReport) {
         try {
-            const buyQuantity = this.utility.getBuyQuantity(executionReport);
+            const bestBidPrice = await this.utility.bestBidPrice(executionReport.symbol);
+            const buyQuantity = await this.utility.getBuyQuantity(executionReport.symbol, bestBidPrice);
             let order = this.placeOrder({
                 symbol: executionReport.symbol,
                 quantity: buyQuantity,
                 type: "MARKET",
                 side: "BUY",
+            }).catch((err) => {
+                throw err;
             });
             return order;
-        } catch (e) {
+        } catch (err) {
             this.logger.error(
-                `placeMarketBuyOrder: ${e.message}. Tried to place an ${executionReport.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
+                `placeMarketBuyOrder: ${err.message}. Tried to place an ${executionReport.symbol} order. startingValue: ${startingValue} | buyQuantity: ${buyQuantity}`
             );
-        }
-    }
-
-    /**
-     * @description used in response to a filled buy order. adds a number of ticks specified by the strategy
-     * and relists the same quantity in the buy order with the new increased price
-     * @param {ExecutionReport} executionReport
-     * @returns Order
-     */
-    async placeLimitSellOrder(executionReport) {
-        try {
-            const sellPrice = this.utility.getSellPrice(executionReport);
-            let order = this.placeOrder({
-                symbol: executionReport.symbol,
-                price: sellPrice,
-                quantity: executionReport.quantity,
-                type: "LIMIT",
-                side: "SELL",
-            });
-            return order;
-        } catch (e) {
-            this.logger.error(`placeLimitSellOrder: ${e.message}. Tried to place an ${executionReport.symbol} order.`);
+            throw err;
         }
     }
 }

@@ -1,6 +1,6 @@
 const Users = {
-    "Phil": "PHIL",
-    "Tom": "TOM"
+    phil: "PHIL",
+    tom: "TOM"
 }
 
 module.exports = Users;
