@@ -1,27 +1,30 @@
-module.exports.config = {
+const config = {
     Calc: {
-        toFixedValue: 8
+        toFixedValue: 8,
     },
-    resetTime: 60_000
-}
+    resetTime: 20_000,
+};
 
-module.exports.users = {
+const users = {
     phil: "PHIL",
     tom: "TOM",
 };
 
-module.exports.strategies = {
+const strategies = {
     TOM: {
         orderLimit: 999,
         startingBTC: 0.00125,
         startingUSD: 25,
         numTickIncrease: 3,
-        initPairs: ["ETHUSD", "DOGEUSD", "ADAUSD", "BTCUSD", "MATICUSD", "VETUSD", "ONEUSD", "SOLUSD"],
+        initPairs: ["DOGEUSD"],
+        // initPairs: ["ETHUSD", "DOGEUSD", "ADAUSD", "BTCUSD", "MATICUSD", "VETUSD", "ONEUSD", "SOLUSD"],
     },
     PHIL: {
         orderLimit: 999,
-        startingUSD: 1000,
+        startingUSD: 200,
         numTickIncrease: 3,
         initPairs: ["DOGEUSD"],
     },
 };
+
+module.exports = { config, users, strategies }
