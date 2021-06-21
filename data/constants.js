@@ -2,7 +2,7 @@ const config = {
     Calc: {
         toFixedValue: 8,
     },
-    resetTime: 20_000,
+    resetTime: 10_000,
 };
 
 const users = {
@@ -12,12 +12,15 @@ const users = {
 
 const strategies = {
     TOM: {
-        orderLimit: 999,
+        orderLimit: 100,
         startingBTC: 0.00125,
-        startingUSD: 25,
+        startingUSD: 50,
         numTickIncrease: 3,
-        initPairs: ["DOGEUSD"],
-        // initPairs: ["ETHUSD", "DOGEUSD", "ADAUSD", "BTCUSD", "MATICUSD", "VETUSD", "ONEUSD", "SOLUSD"],
+        // initPairs: ["DOGEUSD"],
+        initPairs: [
+            "ETHUSD", "DOGEUSD", "ADAUSD", "BTCUSD", "MATICUSD", "VETUSD", "ONEUSD", "SOLUSD",
+            "ETHBTC", "BNBBTC", "ADABTC", "VETBTC"
+        ],
     },
     PHIL: {
         orderLimit: 999,
