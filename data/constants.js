@@ -26,7 +26,7 @@ const strategies = {
     },
     PHIL: {
         orderLimit: 999,
-        startingUSD: 200,
+        startingUSD: 20,
         startingUSD_SELL: 20,
         numTickIncrease: 3,
         numTickDecrease: 3,
