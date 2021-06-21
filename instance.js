@@ -61,12 +61,12 @@ class Instance {
 
     async initPair(symbol) {
         try {
-            const { orderId } = await this.placeLimitBuyOrder(symbol);
+            // this.symbolLimits[symbol] = this.strategy.orderLimit;
+            const { orderId } = await this.placeLimitSellOrder(symbol);
             this.createResetTimer(symbol, orderId);
-            this.symbolLimits[symbol] = this.strategy.orderLimit;
         } catch (err) {
-           this.logger.error(`initPair: ${err.message}`);
-           throw err;
+            this.logger.error(`initPair: ${err.message}`);
+            throw err;
         }
     }
 
@@ -88,9 +88,13 @@ class Instance {
             //todo if statement could be removed by placing handlers in a dictionary
             //todo -- like this: this.handlers[event.side]();
             if (executionReport.side === "BUY") {
-                this.handleBuy(executionReport).catch((err) => { throw err; });
+                this.handleBuy(executionReport).catch((err) => {
+                    throw err;
+                });
             } else if (executionReport.side === "SELL") {
-                this.handleSell(executionReport).catch((err) => { throw err; });
+                this.handleSell(executionReport).catch((err) => {
+                    throw err;
+                });
             }
         } catch (err) {
             this.logger.error(`handleOrderEvent: ${err.message}`);
@@ -98,29 +102,27 @@ class Instance {
         }
     }
 
-    async handleBuy(executionReport) {
+    async handleBuy({ symbol } = {}) {
         try {
-            const order = await this.placeLimitSellOrder(executionReport).catch(err => { throw err });
-            order.eventType = "placedOrderResponse";
-
-            this.dataHandler.insert(order);
+            const order = await this.placeLimitSellOrder(symbol).catch((err) => {
+                throw err;
+            });
+            if (order) {
+                this.createResetTimer(symbol, order.orderId);
+            }
+            return order;
         } catch (err) {
             this.logger.error(`handleBuy: ${err.message}`);
             throw err;
         }
     }
 
-    async handleSell({ symbol } = {}) {
+    async handleSell(executionReport) {
         try {
-            const order = await this.placeLimitBuyOrder(symbol).catch(err => { throw err });
-            if (!order) return;
-
-            this.createResetTimer(symbol, order.orderId);
-
-            order.eventType = "placedOrderResponse";
-            this.dataHandler.insert(order);
-
-            this.logger.info(JSON.stringify(`symbolLimits: ${JSON.stringify(this.symbolLimits)}`));
+            const order = await this.placeLimitBuyOrder(executionReport).catch((err) => {
+                throw err;
+            });
+            return order;
         } catch (err) {
             this.logger.error(`handleSell: ${err.message}`);
             throw err;
@@ -130,11 +132,17 @@ class Instance {
     async createResetTimer(symbol, orderId) {
         try {
             setTimeout(async () => {
-                const isOrderFilled = await this.utility.isOrderFilled(symbol, orderId).catch(err => { throw err; });
+                const isOrderFilled = await this.utility.isOrderFilled(symbol, orderId).catch((err) => {
+                    throw err;
+                });
                 if (!isOrderFilled) {
                     this.logger.info(`Resetting ${symbol} ${orderId}`);
-                    await this.utility.cancelOrder(symbol, orderId).catch(err => { throw err; });
-                    const newOrder = await this.placeLimitBuyOrder(symbol).catch(err => { throw err; });
+                    await this.utility.cancelOrder(symbol, orderId).catch((err) => {
+                        throw err;
+                    });
+                    const newOrder = await this.placeLimitSellOrder(symbol).catch((err) => {
+                        throw err;
+                    });
                     this.createResetTimer(symbol, newOrder.orderId);
                 }
             }, config.resetTime);
@@ -144,34 +152,35 @@ class Instance {
         }
     }
 
-    async placeLimitBuyOrder(symbol) {
-        
-        if (this.symbolLimits[symbol] < 1) return;
+    async placeLimitSellOrder(symbol) {
+        try {
+            const price = await this.utility.getLowestAskPrice(symbol);
+            const quantity = await this.utility.getSellQuantity(symbol, price);
+            const order = this.placeOrder({
+                symbol,
+                quantity,
+                price,
+                type: "LIMIT",
+                side: "SELL",
+            });
 
-        const price = await this.utility.getBestBidPrice(symbol);
-        const quantity = await this.utility.getBuyQuantity(symbol, price);
-        const order = await this.placeOrder({
-            symbol,
-            quantity,
-            price,
-            type: "LIMIT",
-            side: "BUY",
-        });
-
-        this.symbolLimits[symbol]--;
-        return order;
+            return order;
+        } catch (err) {
+            this.logger.error(`placeLimitSellOrder: ${err.message}. Tried to place an ${executionReport.symbol} order.`);
+            throw err;
+        }
     }
 
-    async placeLimitSellOrder(executionReport) {
+    async placeLimitBuyOrder(executionReport) {
         try {
             const { symbol, quantity } = executionReport;
-            const price = await this.utility.getSellPrice(executionReport);
+            const price = await this.utility.getBuyPrice(executionReport);
             let order = this.placeOrder({
                 symbol,
                 price,
                 quantity,
                 type: "LIMIT",
-                side: "SELL",
+                side: "BUY"
             }).catch((err) => {
                 throw err;
             });
@@ -180,6 +189,9 @@ class Instance {
             this.logger.error(`placeLimitSellOrder: ${err.message}. Tried to place an ${executionReport.symbol} order.`);
             throw err;
         }
+
+
+        return order;
     }
 
     async placeOrder(options) {

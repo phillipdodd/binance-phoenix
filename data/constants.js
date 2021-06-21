@@ -15,7 +15,9 @@ const strategies = {
         orderLimit: 100,
         startingBTC: 0.00125,
         startingUSD: 50,
+        startingUSD_SELL: 50,
         numTickIncrease: 3,
+        numTickDecrease: 3,
         // initPairs: ["DOGEUSD"],
         initPairs: [
             "ETHUSD", "DOGEUSD", "ADAUSD", "BTCUSD", "MATICUSD", "VETUSD", "ONEUSD", "SOLUSD",
@@ -25,7 +27,9 @@ const strategies = {
     PHIL: {
         orderLimit: 999,
         startingUSD: 200,
+        startingUSD_SELL: 20,
         numTickIncrease: 3,
+        numTickDecrease: 3,
         initPairs: ["DOGEUSD"],
     },
 };
