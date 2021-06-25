@@ -27,7 +27,7 @@ const strategies = {
     PHIL: {
         orderLimit: 999,
         startingUSD: 20,
-        startingUSD_SELL: 20,
+        startingUSD_SELL: 50,
         numTickIncrease: 3,
         numTickDecrease: 3,
         initPairs: ["DOGEUSD"],
