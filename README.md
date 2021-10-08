@@ -1,3 +1,5 @@
+# Auto Binance Crypto Trading
+
 [NeDB-promises](https://github.com/bajankristof/nedb-promises)
 
 # Todo
